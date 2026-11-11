@@ -15,6 +15,7 @@ Usage:
   waypoint token create <name> [--admin]  make a token; printed once, kept only as a hash
   waypoint token list
   waypoint token revoke <name>
+  waypoint backup <file>                  copy the database, consistent while the server runs, to <file>
 
 Options:
   --host <addr>     address to listen on (default 127.0.0.1, or WAYPOINT_HOST)
@@ -77,6 +78,19 @@ if (command === "token") {
     if (!tokens.revoke(name!)) fail(`no token named ${name}`);
   } else {
     fail(`unknown token command "${sub ?? ""}": create, list or revoke`);
+  }
+  store.db.close();
+  process.exit(0);
+}
+
+if (command === "backup") {
+  if (!sub) fail("backup needs the file to write");
+  const store = WorkItemStore.open(path);
+  try {
+    const pages = await store.backup(resolve(sub!));
+    process.stdout.write(`backed up ${path} to ${resolve(sub!)} (${pages} pages)\n`);
+  } catch (err) {
+    fail(`backup failed: ${(err as Error).message}`);
   }
   store.db.close();
   process.exit(0);

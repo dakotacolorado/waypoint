@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -43,6 +43,20 @@ describe("WorkItemStore on a file", () => {
     expect((await second.queueSettings()).limit).toBe(3);
     expect(new Tokens(second.db).caller(token)).toEqual({ name: "worker", admin: false });
     second.db.close();
+  });
+});
+
+describe("WorkItemStore.backup", () => {
+  it("copies the database to a file another store opens with the same items", async () => {
+    const store = WorkItemStore.open(join(dir, "live.db"));
+    const epic = await store.create(draft({ title: "kept in the copy" }));
+    await store.backup(join(dir, "copy.db"));
+    await store.update(epic.id, { title: "changed after" });
+    const copy = WorkItemStore.open(join(dir, "copy.db"));
+    expect((await copy.graph()).get(epic.id)!.title).toBe("kept in the copy");
+    expect(existsSync(join(dir, "copy.db.partial"))).toBe(false);
+    copy.db.close();
+    store.db.close();
   });
 });
 

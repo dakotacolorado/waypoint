@@ -83,7 +83,8 @@ With no admin token at all, `waypoint serve` makes one and prints it.
 | `--db` | `WAYPOINT_DB` | `~/.waypoint/waypoint.db` |
 | `--ui-url` | `WAYPOINT_UI_URL` | this server's address: where links to items open |
 
-Back it up while it runs with SQLite's own copy: `sqlite3 waypoint.db ".backup copy.db"`.
+Back it up while it runs: `waypoint backup copy.db` takes SQLite's online
+backup of the database (`--db`), consistent while writes go on.
 
 ## Agents
 
