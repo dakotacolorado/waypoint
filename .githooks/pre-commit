@@ -1,0 +1,6 @@
+#!/bin/sh
+# Regenerate the contract and docs, then stage them, so a commit can never
+# carry a stale copy. The drift test is the backstop for `--no-verify`.
+set -e
+npm run spec --silent
+git add openapi.json docs/ skill/reference/api.md

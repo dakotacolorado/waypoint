@@ -1,0 +1,2754 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "version": "0.1.0",
+    "title": "waypoint",
+    "description": "One entity, the work item, at exactly three levels: an epic has no parent, every story has an epic, and every task has a story. `status` values are the board columns. A parent's `status` is derived from its open children's, by the rule on `WorkItemView.status`. `state` is separate: `open` until the item is closed, as `completed` or `not_planned`, from any status. An item may depend on its siblings, items of its type with its parent, and lists in `blockedBy` each dependency, its own or an item's above or below it, not yet `done` or closed. The service refuses with 409 a move to `in_progress`, `review` or `done` while `blockedBy` is not empty, and refuses a parent of the wrong type, a dependency on a non-sibling, a cycle, or deleting an item still referenced. Every create, update and delete is recorded in the item's `history`, which no operation edits. Beside its fields an item keeps `comments`, what people and workers say about it, and a `work-log`, what was done on it; neither changes the item or its history. A story or task not yet started can be `queued` to start on its own, in the order queued, as many at once as the queue's running limit: see `WorkItemView.queuePosition` and `/queue`. Acceptance criteria are ticked and unticked one at a time at `/items/{id}/met`. Tags, at `/tags`, are a shared list of labels, each a unique value, a colour and a description; an item carries some in `tags`, added and removed one at a time at `/items/{id}/tags`, each on the item and everything beneath it."
+  },
+  "tags": [
+    {
+      "name": "items"
+    },
+    {
+      "name": "tags"
+    },
+    {
+      "name": "meta"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "WorkItemView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkItem"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "ready",
+                  "in_progress",
+                  "review",
+                  "done"
+                ],
+                "example": "ready",
+                "description": "Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status."
+              },
+              "shortId": {
+                "type": "string",
+                "description": "The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.",
+                "example": "6ff632ff"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "Items whose parent is this one."
+              },
+              "blockedBy": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "At every status, each dependency of this item, of any item above it, or of any open item below it not yet `done`, that is open and does not read `done`, or is no longer known. A dependency of an item below on this item or another below it is left out: that is work this one does. So a parent reads blocked for the same reasons its children do. A closed one, whatever its `closedReason` or `status`, does not hold anything up until it is reopened; one in `review` still does. While it is not empty, a move to `in_progress`, `review` or `done`, or under a new parent at one of those, is refused with 409."
+              },
+              "finishedEarly": {
+                "type": "boolean",
+                "description": "`done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`."
+              },
+              "queuePosition": {
+                "type": "integer",
+                "nullable": true,
+                "minimum": 0,
+                "exclusiveMinimum": true,
+                "description": "The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started."
+              }
+            },
+            "required": [
+              "shortId",
+              "children",
+              "blockedBy",
+              "finishedEarly",
+              "queuePosition"
+            ]
+          }
+        ]
+      },
+      "Tick": {
+        "type": "object",
+        "properties": {
+          "criterion": {
+            "type": "string",
+            "description": "The criterion's text, as it stood when ticked."
+          },
+          "by": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `claimed-by` of the write that ticked it, unverified; null when it said nothing."
+          },
+          "at": {
+            "type": "string",
+            "description": "When it was ticked."
+          }
+        },
+        "required": [
+          "criterion",
+          "by",
+          "at"
+        ]
+      },
+      "Assignment": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Drawn when the assignment is made; a new start on the item makes a new one."
+          },
+          "agent": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "The agent's id in worker-service, written once worker-service has made it, or for the queue's start once it has recorded the request, whose id its agent takes; null while it is being made."
+          },
+          "name": {
+            "type": "string",
+            "description": "The agent's name, `<shortId>-<first 8 characters of id>`, or for the queue's start, once its request is recorded, `implementer-<first 8 characters of agent>`: who holds the item, and how a retry finds the agent already made.",
+            "example": "6ff632ff-1c9e4a07"
+          },
+          "by": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `claimed-by` of the request that made it, unverified; null when it said nothing, as the person's from the page."
+          },
+          "at": {
+            "type": "string",
+            "description": "When it was made."
+          },
+          "ended": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "at": {
+                "type": "string",
+                "description": "When it ended."
+              },
+              "why": {
+                "type": "string",
+                "description": "Why, as the service says it: the item closed, or its agent retired."
+              }
+            },
+            "required": [
+              "at",
+              "why"
+            ],
+            "description": "Null while the assignment stands. Set when the item is closed, or an item above it closes it, and kept on reopening: an ended assignment holds nothing, and the next start makes a new one without asking worker-service."
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "name",
+          "by",
+          "at",
+          "ended"
+        ],
+        "description": "The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status."
+      },
+      "WorkItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "epic",
+              "story",
+              "task"
+            ],
+            "example": "task"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "met": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tick"
+            },
+            "description": "The acceptance criteria a reviewer has ticked as met, in the order of `acceptanceCriteria`. Ticked and unticked one at a time by POST and DELETE `/items/{id}/met`, or all at once by a patch's `met`; a tick goes when its criterion's text changes or the criterion is dropped, so an edited criterion is met again only once ticked again."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ],
+            "example": "ready"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "example": "open",
+            "description": "Whether anyone still needs to see the item, apart from where the work got to: `status` is never changed by closing, and reaching `done` does not close. Every item is created `open`. Closing an item closes what is open beneath it; reopening writes no other item."
+          },
+          "closedReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "completed",
+              "not_planned",
+              null
+            ],
+            "example": "completed",
+            "description": "Why a closed item closed: `completed`, or `not_planned` for work abandoned at any status. Null while open."
+          },
+          "parent": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "Required, and exactly one level up: a task's is a story, a story's is an epic. An epic's is null. A create, move or re-type that breaks this is refused with 400."
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Items that must read `done`, or be closed, before this one moves to `in_progress`, `review` or `done`: see `blockedBy`. A dependency added to work already started holds up only its next move. Only between siblings: each one added must be of the item's own type with its parent, or the write is refused with 400 naming it; one stored before that rule is kept. A move to another parent is refused with 400 while it would leave the item, or an open item depending on it, depending on a non-sibling."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "heldBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "Who is on the item: the `claimed-by` of the write that last moved its stored `status` to `in_progress`, unverified like a history entry's `claimedBy`, and null if that write said nothing. Set by the service only. Kept through `review`; cleared by a move to `backlog`, `ready` or `done`, or by closing, and set again only by a later move to `in_progress`, so reopening alone leaves it null. A write that leaves `status` as it was leaves it as it was. Null while `status` is derived."
+          },
+          "reviewedBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "The reviewer that last picked the item up for review, as approval-service's reviewer `reviewer-<id>`: written only by a write's `reviewedBy`, unverified like `heldBy`. Null until one is written. Kept through every move and closing, and replaced by the next review's write, so after a send-back it names the last reviewer until a new one picks it up."
+          },
+          "queuedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "When the item was queued to start on its own, by a write's `queued`; null when it is not queued. Cleared in the same write that closes the item, moves its stored `status` to `in_progress`, `review` or `done`. Queuing it again keeps the time."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 20,
+            "description": "The ids of the tags the item carries, at most 20, oldest added first: see `/tags`. Added and removed one at a time by `POST /items/{id}/tags` and `DELETE /items/{id}/tags/{tag}`, never by `POST /items` or `PATCH`, so two writers tagging one item never overwrite each other. Each is added to or removed from every item beneath, too. An item made under a parent, or moved under one with everything beneath it, takes on the parent's tags besides its own, each change in its history; moving away takes none off. A move giving any item a 21st is refused with 400 naming it."
+          },
+          "assignment": {
+            "$ref": "#/components/schemas/Assignment"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "body",
+          "acceptanceCriteria",
+          "met",
+          "status",
+          "state",
+          "closedReason",
+          "parent",
+          "dependsOn",
+          "createdAt",
+          "updatedAt",
+          "heldBy",
+          "reviewedBy",
+          "queuedAt",
+          "tags",
+          "assignment"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Conflict": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "When an id was given as a prefix that more than one item's id starts with: those items."
+              }
+            }
+          }
+        ]
+      },
+      "Blocked": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "blockedBy": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "The item's `blockedBy`: each dependency to wait for, named with its title and status in `error`."
+              }
+            },
+            "required": [
+              "blockedBy"
+            ]
+          }
+        ]
+      },
+      "Draft": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "epic",
+              "story",
+              "task"
+            ],
+            "default": "task",
+            "example": "task"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 20000,
+            "default": ""
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "One line per criterion."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ],
+            "default": "backlog",
+            "example": "ready",
+            "description": "Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty."
+          },
+          "parent": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[0-9a-fA-F-]{8,36}$",
+            "default": null,
+            "description": "A story for a task, an epic for a story, null only for an epic."
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F-]{8,36}$",
+              "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "maxItems": 50,
+            "default": []
+          },
+          "tags": {
+            "description": "Not accepted: refused with 400 whatever its value. See `WorkItem.tags`."
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "UpdatedItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkItemView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "$ref": "#/components/schemas/AgentOutcome"
+              }
+            }
+          }
+        ]
+      },
+      "AgentOutcome": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The agent's id in worker-service, from the assignment."
+          },
+          "name": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "retired",
+              "already_retired",
+              "refused"
+            ],
+            "description": "`retired`: worker-service retired it now. `already_retired`: it was retired, or worker-service has no record of it, so nothing was retired. `refused`: worker-service would not retire it, in `said`."
+          },
+          "said": {
+            "type": "string",
+            "description": "The outcome in a line for the person, with worker-service's words when it refused."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "outcome",
+          "said"
+        ],
+        "description": "Present only on the person's sign-off of an epic (closing it `completed`) whose assignment names an agent: what was done to that agent. The close stands whatever it says."
+      },
+      "Patch": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "epic",
+              "story",
+              "task"
+            ],
+            "example": "task"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 50
+          },
+          "met": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "description": "Every criterion now met, by its text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ],
+            "example": "ready",
+            "description": "Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "example": "open",
+            "description": "Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`."
+          },
+          "closedReason": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "not_planned"
+            ],
+            "example": "completed",
+            "description": "Required with, and only with, `state: closed`."
+          },
+          "parent": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[0-9a-fA-F-]{8,36}$",
+            "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F-]{8,36}$",
+              "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "maxItems": 50
+          },
+          "reviewedBy": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The worker reviewing the item, as the reviewer's own name; null clears it."
+          },
+          "force": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Move the item to `in_progress`, `review` or `done` though its `blockedBy` is not empty, recorded as the history entry's `overrode`. The person's alone: refused with 403 from a write that sends `claimed-by`, as every worker's does. Changes nothing on its own."
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "`true` queues the item to start on its own, at the back of the queue, or keeps its place if already queued; `false` takes it off. Only an open epic, story or task that reads `backlog` or `ready` can be queued, as this write leaves it: any other is refused with 400, naming why. Recorded in `history` as a change to `queuedAt`."
+          },
+          "tags": {
+            "description": "Not accepted: refused with 400 whatever its value. See `WorkItem.tags`."
+          }
+        }
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The item written: this one, or one beneath it when the write was made."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "deleted"
+            ],
+            "example": "updated"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Change"
+            },
+            "description": "Each stored field whose value differs, as the item stood before and after. Empty when an update set every field to what it already held."
+          },
+          "at": {
+            "type": "string",
+            "description": "When the service recorded it."
+          },
+          "claimedBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `claimed-by` header the write was sent with, unverified: callers sharing a token say who they are by it. Without one, the name of the write's token; null for an admin token's write that said nothing, the person's."
+          },
+          "overrode": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The dependencies a `force` moved the item past, unfinished as the write found them: an override, made by the person since only a write with no `claimed-by` may force. Empty otherwise."
+          }
+        },
+        "required": [
+          "item",
+          "action",
+          "changes",
+          "at",
+          "claimedBy",
+          "overrode"
+        ]
+      },
+      "Change": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "type",
+              "title",
+              "body",
+              "acceptanceCriteria",
+              "met",
+              "status",
+              "heldBy",
+              "reviewedBy",
+              "state",
+              "closedReason",
+              "parent",
+              "dependsOn",
+              "queuedAt",
+              "tags",
+              "assignment"
+            ],
+            "description": "`met` is recorded as the texts of the criteria ticked."
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/components/schemas/Assignment"
+              },
+              {
+                "nullable": true
+              }
+            ],
+            "description": "Null on `created`."
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/components/schemas/Assignment"
+              },
+              {
+                "nullable": true
+              }
+            ],
+            "description": "Null on `deleted`."
+          }
+        },
+        "required": [
+          "field",
+          "from",
+          "to"
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The item it was written on."
+          },
+          "author": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `claimed-by` header it was written with, unverified, as a history entry's `claimedBy`. Null when the writer said nothing, as a person writing from the page does."
+          },
+          "at": {
+            "type": "string",
+            "description": "When the service recorded it."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "Markdown."
+          }
+        },
+        "required": [
+          "id",
+          "item",
+          "author",
+          "at",
+          "body"
+        ]
+      },
+      "CommentDraft": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "Markdown."
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "WorkLogEntry": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Comment"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Pull requests, commits or anything else the work left behind."
+              }
+            },
+            "required": [
+              "links"
+            ]
+          }
+        ]
+      },
+      "WorkLogDraft": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "What was done, in Markdown."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2000,
+              "format": "uri"
+            },
+            "maxItems": 20,
+            "default": []
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "TaggedItemView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkItemView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "reached": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many items beneath this one the write changed."
+              }
+            },
+            "required": [
+              "reached"
+            ]
+          }
+        ]
+      },
+      "ItemTag": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "A tag's id, or its value in any case.",
+            "example": "ui"
+          }
+        },
+        "required": [
+          "tag"
+        ]
+      },
+      "Criterion": {
+        "type": "object",
+        "properties": {
+          "criterion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The criterion's text, exactly as in `acceptanceCriteria`."
+          }
+        },
+        "required": [
+          "criterion"
+        ]
+      },
+      "Tag": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "The text shown on the chip. Unique among tags case-insensitively.",
+            "example": "ui"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "description": "The chip's background, `#rrggbb`, stored as given.",
+            "example": "#3b82f6"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "What the tag is for, shown when hovering its chip."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "value",
+          "color",
+          "description",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "TagTaken": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "tag": {
+                "type": "string",
+                "format": "uuid",
+                "description": "The tag that already has the value."
+              }
+            },
+            "required": [
+              "tag"
+            ]
+          }
+        ]
+      },
+      "TagDraft": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "The text shown on the chip. Unique among tags case-insensitively.",
+            "example": "ui"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "description": "The chip's background, `#rrggbb`, stored as given.",
+            "example": "#3b82f6"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "default": "",
+            "description": "What the tag is for, shown when hovering its chip."
+          }
+        },
+        "required": [
+          "value",
+          "color"
+        ]
+      },
+      "TagPatch": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "The text shown on the chip. Unique among tags case-insensitively.",
+            "example": "ui"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "description": "The chip's background, `#rrggbb`, stored as given.",
+            "example": "#3b82f6"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "What the tag is for, shown when hovering its chip."
+          }
+        }
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "tags": [
+          "meta"
+        ],
+        "summary": "Liveness check",
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "version": {
+                      "type": "string",
+                      "description": "The package's version."
+                    },
+                    "commit": {
+                      "type": "string",
+                      "description": "The commit this copy was built from: 40 hex characters, `-dirty` when its tree differed, or `unknown`."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "version",
+                    "commit"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "listItems",
+        "summary": "List items",
+        "description": "Filters combine by AND. What can be started now is the `ready` items whose `blockedBy` is empty; any other is refused until it is.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "review",
+                "done"
+              ],
+              "example": "ready"
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ],
+              "example": "open",
+              "description": "`open` for only what still needs looking at."
+            },
+            "required": false,
+            "description": "`open` for only what still needs looking at.",
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "epic",
+                "story",
+                "task"
+              ],
+              "example": "task"
+            },
+            "required": false,
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F-]{8,36}$",
+              "description": "Only the children of this item, by its id or a prefix of it."
+            },
+            "required": false,
+            "description": "Only the children of this item, by its id or a prefix of it.",
+            "name": "parent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only items whose `heldBy` is exactly this, as `heldBy=agent-1&state=open`."
+            },
+            "required": false,
+            "description": "Only items whose `heldBy` is exactly this, as `heldBy=agent-1&state=open`.",
+            "name": "heldBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only items whose `reviewedBy` is exactly this."
+            },
+            "required": false,
+            "description": "Only items whose `reviewedBy` is exactly this.",
+            "name": "reviewedBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` for only the queue, listed in its order, next to start first; `false` for only what is not in it. See `WorkItemView.queuePosition`."
+            },
+            "required": false,
+            "description": "`true` for only the queue, listed in its order, next to start first; `false` for only what is not in it. See `WorkItemView.queuePosition`.",
+            "name": "queued",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only items carrying this tag, by its id or its value in any case, as `tag=ui&state=open`. A tag that does not exist gives an empty list."
+            },
+            "required": false,
+            "description": "Only items carrying this tag, by its id or its value in any case, as `tag=ui&state=open`. A tag that does not exist gives an empty list.",
+            "name": "tag",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The matching items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkItemView"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "createItem",
+        "summary": "Create an item",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The item to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Draft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created item.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Created at `in_progress`, `review` or `done` with a dependency not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Blocked"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "getItem",
+        "summary": "Read one item",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "updateItem",
+        "summary": "Update the fields supplied, leaving the rest alone",
+        "description": "Setting `done` on a parent whose open children are not all `done` is refused with 400. Moving an item to `in_progress`, `review` or `done`, or under a new parent while there, is refused with 409 while its `blockedBy` is not empty, unless the person sends `force`. A parent's status follows its children's, whatever is written to it, but writing it `in_progress`, `review` or `done` while it reads `backlog` or `ready` is its Start, refused the same way.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "Fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Patch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated item.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sent with a `claimed-by`, a `force`, or closing an epic that has children as `completed`: only the person may override `blockedBy` or sign off an epic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Blocked"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "deleteItem",
+        "summary": "Delete an item",
+        "description": "Refused while another item names it as a parent or a dependency. The item's history outlives it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted, or already absent, which records nothing."
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another item still references it, other writes kept landing first, or the id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/history": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "getItemHistory",
+        "summary": "Read every write to an item and to everything beneath it",
+        "description": "One entry per create, update and delete, recorded by the service in the same transaction as the write, under the item written and every item above it at the time; a move files it under both sides. A write beneath an item is how a derived `status` changes, so that change has no entry of its own. No operation edits or removes an entry, and deleting an item leaves its history readable here.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item's history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HistoryEntry"
+                      },
+                      "description": "Oldest first."
+                    }
+                  },
+                  "required": [
+                    "entries"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id, and none ever recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/comments": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "listItemComments",
+        "summary": "Read the comments on an item",
+        "description": "What people and workers said to each other about the item, not beneath it. Written by any caller and edited by none, apart from the item's fields and their `history`. Writing one changes nothing on the item and records no history entry.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item's comments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "comments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Comment"
+                      },
+                      "description": "Oldest first."
+                    }
+                  },
+                  "required": [
+                    "comments"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "addItemComment",
+        "summary": "Comment on an item",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The comment.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The comment, as stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/work-log": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "listItemWorkLog",
+        "summary": "Read what was done on an item",
+        "description": "A worker's record of each step it finished on the item, kept apart from comments. Written by any caller and edited by none, apart from the item's fields and their `history`. Writing one changes nothing on the item and records no history entry.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item's work log.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkLogEntry"
+                      },
+                      "description": "Oldest first."
+                    }
+                  },
+                  "required": [
+                    "entries"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "addItemWorkLogEntry",
+        "summary": "Record a step done on an item",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "What was done.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkLogDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The entry, as stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkLogEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/tags": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "addItemTag",
+        "summary": "Add a tag to an item",
+        "description": "Adds one tag to `tags` on the item and on every item beneath it, open or closed, in one write. Each item it changes records its own `tags` change in `history`; one already carrying the tag is left alone and records nothing. Refused with 400, changing nothing, for a tag that does not exist, or for one past the 20 an item may carry on any item it reaches, naming those.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The tag to add.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemTag"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The item, carrying the tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaggedItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/tags/{tag}": {
+      "delete": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "removeItemTag",
+        "summary": "Take a tag off an item",
+        "description": "Removes one tag from `tags` on the item and on every item beneath it, open or closed, in one write, each item it changes recording its own `tags` change in `history`. Items not carrying it, or a tag that does not exist, are left alone and record nothing. Taken off a child alone, its parent and siblings keep it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "A tag's id, or its value in any case.",
+              "example": "ui"
+            },
+            "required": true,
+            "description": "A tag's id, or its value in any case.",
+            "name": "tag",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item, without the tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaggedItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/met": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "tickCriterion",
+        "summary": "Tick one acceptance criterion as met",
+        "description": "Adds one tick to `met`, by the criterion's text, recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The criterion to tick.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Criterion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The item, with the criterion ticked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or the item has no criterion with that text, named.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "untickCriterion",
+        "summary": "Untick one acceptance criterion",
+        "description": "Removes that criterion's tick from `met`, leaving every other. One not ticked changes nothing and records no history. Refused with 400 for a criterion the item does not have.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The criterion to untick.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Criterion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The item, without the criterion's tick.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or the item has no criterion with that text, named.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tags": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "tags"
+        ],
+        "operationId": "listTags",
+        "summary": "List tags",
+        "responses": {
+          "200": {
+            "description": "Every tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Tag"
+                      },
+                      "description": "By value."
+                    }
+                  },
+                  "required": [
+                    "tags"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "tags"
+        ],
+        "operationId": "createTag",
+        "summary": "Create a tag",
+        "requestBody": {
+          "description": "The tag to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another tag already has the value, case-insensitively; or other writes kept landing first, so retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagTaken"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tags/{id}": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "tags"
+        ],
+        "operationId": "getTag",
+        "summary": "Read one tag",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The tag's id."
+            },
+            "required": true,
+            "description": "The tag's id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tag with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "tags"
+        ],
+        "operationId": "updateTag",
+        "summary": "Update the tag's fields supplied, leaving the rest alone",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The tag's id."
+            },
+            "required": true,
+            "description": "The tag's id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "description": "Fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated tag.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No tag with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another tag already has the value, case-insensitively; or other writes kept landing first, so retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagTaken"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "tags"
+        ],
+        "operationId": "deleteTag",
+        "summary": "Delete a tag",
+        "description": "Refused with 409 while any item, open or closed, carries it: take it off them first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The tag's id."
+            },
+            "required": true,
+            "description": "The tag's id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted, or already absent."
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Items still carry the tag, named by how many and the first few by short id; or other writes kept landing first, so retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
