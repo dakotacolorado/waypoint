@@ -1814,3 +1814,19 @@ describe("short ids", () => {
     expect(graph.freshId(() => draws.shift()!)).toBe("abcdef02-0000-4000-8000-000000000003");
   });
 });
+
+describe("pages", () => {
+  it.each([
+    ["/", "text/html", "<title>waypoint</title>"],
+    ["/ui/app.js", "text/javascript", "function board"],
+    ["/ui/style.css", "text/css", ".board"],
+    ["/docs/api", "text/html", "createItem"],
+    ["/docs/mcp", "text/html", "create_item"],
+    ["/mcp.json", "application/json", "\"tools\""],
+  ])("serves %s without a token", async (path, type, says) => {
+    const res = await call(path);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(type);
+    expect(await res.text()).toContain(says);
+  });
+});

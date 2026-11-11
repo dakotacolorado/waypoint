@@ -9,8 +9,11 @@ restate the code or narrate how it came to be.
 
 ## Contract
 
-`src/schema.ts` is the source of `openapi.json` and `docs/`. The pre-commit hook
-regenerates them (`npm run spec`); a test fails if they drift.
+`src/schema.ts` is the source of `openapi.json` and the API's docs; `src/mcp.ts`
+of `mcp.json` and `docs/MCP.md`. The pre-commit hook regenerates them (`npm run
+spec`); a test fails if they drift. Every MCP tool is one API request, so a rule
+lives in the API alone. The page, `ui/`, is plain JS over the API: make every
+element with `h`, which sets text, never HTML.
 
 Each stored record is its JSON in SQLite. Records may carry fields since
 removed: `store.ts` reads each field it knows with a fallback and ignores the

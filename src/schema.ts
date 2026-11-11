@@ -13,10 +13,10 @@ import {
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
-const Status = z.enum(STATUSES).openapi({ example: "ready" });
-const State = z.enum(STATES).openapi({ example: "open" });
+export const Status = z.enum(STATUSES).openapi({ example: "ready" });
+export const State = z.enum(STATES).openapi({ example: "open" });
 const ClosedReason = z.enum(CLOSED_REASONS).openapi({ example: "completed" });
-const Type = z.enum(TYPES).openapi({ example: "task" });
+export const Type = z.enum(TYPES).openapi({ example: "task" });
 const Id = z.string().uuid();
 /** Resolved by `Graph.resolve`; stored as the full id. */
 const Ref = z

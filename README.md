@@ -2,7 +2,8 @@
 
 A task tracker for people and the agents working with them: epics, stories and
 tasks, with dependencies between them and a status that rolls up from below.
-One Node process serves an HTTP API, and keeps everything in one SQLite file.
+One Node process serves a web page, an HTTP API and an MCP server, and keeps
+everything in one SQLite file.
 
 ```sh
 npx @dakotajp/waypoint
@@ -16,7 +17,25 @@ admin token (shown once, kept only as a hash): wp_…
 
 Node 24 or later. Nothing else: no cloud account, no other service.
 
-## Try it
+| Path | What |
+|---|---|
+| `/` | the page: a board by status, each item's page, a form for new ones |
+| `/items`, `/tags`, … | the API ([`openapi.json`](./openapi.json), docs at `/docs/api`) |
+| `/mcp` | the MCP server ([`mcp.json`](./mcp.json), docs at `/docs/mcp`) |
+| `/health` | liveness, with the version and commit |
+
+![The board](./docs/images/board.png)
+
+## The page
+
+Open the address it printed and paste the admin token. The board shows open
+items in their status columns, filtered by type or epic; an item's page shows
+its parents, body, acceptance criteria (tick them there), children,
+dependencies, tags, comments, work log and history, and moves, closes, edits
+and adds beneath it. It is plain HTML and JavaScript over the same API, with
+no build step.
+
+## Try the API
 
 ```sh
 export WT_URL=http://127.0.0.1:4400 WT_TOKEN=wp_…   # the admin token it printed
@@ -88,6 +107,21 @@ backup of the database (`--db`), consistent while writes go on.
 
 ## Agents
 
+### MCP
+
+Point an MCP client at `/mcp` with a token:
+
+```json
+{ "mcpServers": { "waypoint": { "type": "http", "url": "http://127.0.0.1:4400/mcp", "headers": { "Authorization": "Bearer wp_…" } } } }
+```
+
+Each of its 19 tools (`list_items`, `create_item`, `update_item`,
+`add_work_log`, `tick_criterion`, …) is one API request made with the
+client's token and `claimed-by`, so it is refused and recorded as that request
+would be. [`docs/MCP.md`](./docs/MCP.md) lists them with their inputs.
+
+### The wt client
+
 `GET /skill` serves the client as a [Claude Code](https://claude.com/claude-code)
 skill's files, `skills/work-tracker/bin/wt` and its `reference/`, for a
 harness to lay into an agent's skills folder.
@@ -110,9 +144,10 @@ npm test
 npm run build
 ```
 
-`src/schema.ts` is the source of `openapi.json`, `docs/` and
-`skill/reference/api.md`; `npm run spec` regenerates them, as the pre-commit
-hook does.
+`src/schema.ts` is the source of `openapi.json`, `docs/API.md`,
+`docs/index.html` and `skill/reference/api.md`; `src/mcp.ts` of `mcp.json`,
+`docs/MCP.md` and `docs/mcp.html`. `npm run spec` regenerates them all, as the
+pre-commit hook does, and a test fails if any drifts. The page is `ui/`.
 
 ## License
 

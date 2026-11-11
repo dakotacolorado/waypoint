@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
 import type { Auth, Caller } from "./auth.ts";
 import { HTTPException } from "hono/http-exception";
 import { type Assignment, AmbiguousIdError, BlockedError, ForbiddenError, GraphError, note, type Note } from "./domain.ts";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { readSkill, SKILL_DIR, type Skill } from "./skill.ts";
 import { AgentRefusedError, Assigner, type AgentOutcome, type Agents } from "./assignment.ts";
@@ -54,6 +57,48 @@ export class WorkTrackerApi {
     this.guard();
     this.routes();
     this.spec();
+    this.mcp();
+    this.pages();
+  }
+
+  /** The page, and the API's and the MCP server's docs, read once: none needs a token, and none holds data. */
+  private pages(): void {
+    const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+    const page = (path: string, type: string) => {
+      const content = file(path);
+      return (c: Context) => c.body(content, 200, { "content-type": `${type}; charset=utf-8` });
+    };
+    this.hono.get("/", page("ui/index.html", "text/html"));
+    this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
+    this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
+    this.hono.get("/docs/api", page("docs/index.html", "text/html"));
+    this.hono.get("/docs/mcp", page("docs/mcp.html", "text/html"));
+    this.hono.get("/mcp.json", page("mcp.json", "application/json"));
+  }
+
+  /**
+   * The MCP server, at `/mcp`, stateless: each request gets its own, whose
+   * tools make their API requests in-process with the request's own
+   * `authorization` and `claimed-by`.
+   */
+  private mcp(): void {
+    this.hono.all("/mcp", async (c) => {
+      const authorization = c.req.header("authorization")!;
+      const claimedBy = c.req.header("claimed-by");
+      const call: Call = async (method, path, body) => {
+        const res = await this.hono.fetch(
+          new Request(`http://local${path}`, {
+            method,
+            headers: { authorization, "content-type": "application/json", ...(claimedBy && { "claimed-by": claimedBy }) },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }),
+        );
+        return { status: res.status, body: res.status === 204 ? null : await res.json() };
+      };
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await mcpServer(this.about.version, call).connect(transport);
+      return transport.handleRequest(c.req.raw);
+    });
   }
 
   get fetch() {
@@ -82,6 +127,7 @@ export class WorkTrackerApi {
     this.hono.use("/tags", bearer);
     this.hono.use("/tags/*", bearer);
     this.hono.use("/queue", bearer);
+    this.hono.use("/mcp", bearer);
   }
 
   private routes(): void {
