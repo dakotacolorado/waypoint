@@ -2,8 +2,11 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
 import type { Auth, Caller } from "./auth.ts";
 import { HTTPException } from "hono/http-exception";
-import { AmbiguousIdError, BlockedError, ForbiddenError, GraphError, note, type Note } from "./domain.ts";
+import { type Assignment, AmbiguousIdError, BlockedError, ForbiddenError, GraphError, note, type Note } from "./domain.ts";
 import * as routes from "./schema.ts";
+import { readSkill, SKILL_DIR, type Skill } from "./skill.ts";
+import { AgentRefusedError, Assigner, type AgentOutcome, type Agents } from "./assignment.ts";
+import { queueOf } from "./queue.ts";
 import { AssignedError, ConflictError, type WorkItemStore } from "./store.ts";
 import { TagTakenError } from "./tags.ts";
 
@@ -12,6 +15,14 @@ export const SPEC_PATH = "/openapi.json";
 export interface ApiOptions {
   /** What `/health` says this copy is. */
   about?: { version: string; commit: string };
+  /** What `GET /skill` serves. */
+  skill?: () => Skill;
+  /**
+   * `assigner` and `fleet` are made on first use, so a server without worker-service's address still serves
+   * everything else; there starting an agent answers 503, and the queue reads each agent's state as `unknown`.
+   */
+  assigner?: () => Assigner;
+  fleet?: () => Pick<Agents, "get" | "requestOf">;
 }
 
 export class WorkTrackerApi {
@@ -20,11 +31,22 @@ export class WorkTrackerApi {
   private readonly store: WorkItemStore;
   private readonly auth: Auth;
   private readonly about: { version: string; commit: string };
+  private readonly skill: () => Skill;
+  private readonly assigner: () => Assigner;
+  private readonly fleet: Pick<Agents, "get" | "requestOf">;
 
   constructor(store: WorkItemStore, auth: Auth, options: ApiOptions = {}) {
     this.store = store;
     this.auth = auth;
     this.about = options.about ?? { version: "0.0.0", commit: "unknown" };
+    this.skill = options.skill ?? (() => readSkill(SKILL_DIR, 0, "unknown", ""));
+    const assigner = options.assigner ?? unconfigured;
+    const fleet = options.fleet ?? unconfigured;
+    let made: Assigner | undefined;
+    this.assigner = () => (made ??= assigner());
+    let agents: Pick<Agents, "get" | "requestOf"> | undefined;
+    const reached = () => (agents ??= fleet());
+    this.fleet = { get: async (id) => reached().get(id), requestOf: async (id) => reached().requestOf(id) };
     this.hono = new OpenAPIHono<{ Variables: { caller: Caller } }>({
       defaultHook: (result, c) =>
         result.success ? undefined : c.json({ error: issues(result.error) }, 400),
@@ -38,6 +60,15 @@ export class WorkTrackerApi {
     return this.hono.fetch;
   }
 
+  /** As `Assigner.retire`, and refused in words where worker-service is not configured. */
+  private async retireAgent(assignment: Assignment & { agent: string }): Promise<AgentOutcome> {
+    try {
+      return await this.assigner().retire(assignment);
+    } catch (err) {
+      return { id: assignment.agent, name: assignment.name, outcome: "refused", said: `${assignment.name} was not retired: ${(err as Error).message}` };
+    }
+  }
+
   private guard(): void {
     const bearer: MiddlewareHandler<{ Variables: { caller: Caller } }> = async (c, next) => {
       const header = c.req.header("authorization");
@@ -47,8 +78,10 @@ export class WorkTrackerApi {
       await next();
     };
     this.hono.use("/items/*", bearer);
+    this.hono.use("/skill", bearer);
     this.hono.use("/tags", bearer);
     this.hono.use("/tags/*", bearer);
+    this.hono.use("/queue", bearer);
   }
 
   private routes(): void {
@@ -56,6 +89,8 @@ export class WorkTrackerApi {
     const missing = { error: "Not found." } as const;
 
     app.openapi(routes.healthRoute, (c) => c.json({ ok: true as const, ...this.about }, 200));
+
+    app.openapi(routes.skillRoute, (c) => c.json(this.skill(), 200));
 
     app.openapi(routes.listRoute, async (c) => {
       const { status, state, type, parent, heldBy, reviewedBy, queued, tag } = c.req.valid("query");
@@ -89,9 +124,16 @@ export class WorkTrackerApi {
 
     app.openapi(routes.patchRoute, async (c) => {
       const { id } = c.req.valid("param");
-      const item = await this.store.update(id, c.req.valid("json"), claimed(c));
+      const by = claimed(c);
+      const was = await this.store.graph().then((graph) => graph.get(graph.resolve(id)));
+      const item = await this.store.update(id, c.req.valid("json"), by);
       if (!item) return c.json(missing, 404);
-      return c.json((await this.store.graph()).view(item), 200);
+      const view = (await this.store.graph()).view(item);
+      const signedOff = item.type === "epic" && was?.state === "open" && item.state === "closed" && item.closedReason === "completed";
+      const assignment = item.assignment;
+      if (!signedOff || !assignment?.agent) return c.json(view, 200);
+      const agent = await this.retireAgent({ ...assignment, agent: assignment.agent });
+      return c.json({ ...view, agent }, 200);
     });
 
     app.openapi(routes.historyRoute, async (c) => {
@@ -123,6 +165,11 @@ export class WorkTrackerApi {
       return added ? c.json(logged(added), 201) : c.json(missing, 404);
     });
 
+    app.openapi(routes.assignRoute, async (c) => {
+      const item = await this.assigner().start(c.req.valid("param").id, claimed(c));
+      return item ? c.json(item, 201) : c.json(missing, 404);
+    });
+
     app.openapi(routes.tagItemRoute, async (c) => {
       const { id } = c.req.valid("param");
       const tagged = await this.store.tagItem(id, c.req.valid("json").tag, claimed(c));
@@ -150,6 +197,15 @@ export class WorkTrackerApi {
     app.openapi(routes.deleteRoute, async (c) => {
       await this.store.remove(c.req.valid("param").id, claimed(c));
       return c.body(null, 204);
+    });
+
+    const queue = async () => queueOf(await this.store.graph(), await this.store.queueSettings(), this.fleet, Date.now());
+
+    app.openapi(routes.queueRoute, async (c) => c.json(await queue(), 200));
+
+    app.openapi(routes.patchQueueRoute, async (c) => {
+      await this.store.setQueueLimit(c.req.valid("json").limit, claimed(c));
+      return c.json(await queue(), 200);
     });
 
     const noTag = { error: "No tag with that id." } as const;
@@ -189,6 +245,8 @@ export class WorkTrackerApi {
       if (err instanceof TagTakenError) return c.json({ error: err.message, tag: err.tag }, 409);
       if (err instanceof ConflictError) return c.json({ error: err.message }, 409);
       if (err instanceof AssignedError) return c.json({ error: err.message, assignment: err.assignment }, 409);
+      if (err instanceof AgentRefusedError) return c.json({ error: err.message }, 502);
+      if (err instanceof UnconfiguredError) return c.json({ error: err.message }, 503);
       if (err instanceof HTTPException) {
         return c.json({ error: err.message || "Bad request." }, err.status);
       }
@@ -227,10 +285,16 @@ export class WorkTrackerApi {
           "`tags`, added and removed one at a time at `/items/{id}/tags`, each on the item and " +
           "everything beneath it.",
       },
-      tags: [{ name: "items" }, { name: "tags" }, { name: "meta" }],
+      tags: [{ name: "items" }, { name: "tags" }, { name: "queue" }, { name: "meta" }],
     });
   }
 }
+
+class UnconfiguredError extends Error {}
+
+const unconfigured = (): never => {
+  throw new UnconfiguredError("worker-service is not configured: no agent can be started");
+};
 
 /**
  * Who a write is from: its `claimed-by`, else its token's name. Null, the

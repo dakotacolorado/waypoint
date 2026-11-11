@@ -10,6 +10,7 @@ npx @dakotajp/waypoint
 
 ```
 waypoint v0.1.0 listening on http://127.0.0.1:4400, data in ~/.waypoint/waypoint.db
+no worker-service configured: queued items wait
 admin token (shown once, kept only as a hash): wp_…
 ```
 
@@ -47,8 +48,8 @@ skill/bin/wt PATCH /items/<id> '{"status":"in_progress"}'
   one at a time.
 - **Tags**, a shared list of labels, each carried down to everything beneath
   the item it is put on.
-- **A queue order**: stories and tasks marked `queued`, read back in the
-  order queued.
+- **A queue**: stories and tasks to start on their own, in order, up to a
+  running limit, when a worker-service is configured (below).
 
 [`skill/reference/statuses.md`](./skill/reference/statuses.md) has the rules
 in full, and the API is [`openapi.json`](./openapi.json), rendered in
@@ -80,8 +81,23 @@ With no admin token at all, `waypoint serve` makes one and prints it.
 | `--host` | `WAYPOINT_HOST` | `127.0.0.1` |
 | `--port` | `WAYPOINT_PORT` | `4400` |
 | `--db` | `WAYPOINT_DB` | `~/.waypoint/waypoint.db` |
+| `--ui-url` | `WAYPOINT_UI_URL` | this server's address: where links to items open |
 
 Back it up while it runs with SQLite's own copy: `sqlite3 waypoint.db ".backup copy.db"`.
+
+## Agents
+
+`GET /skill` serves the client as a [Claude Code](https://claude.com/claude-code)
+skill's files, `skills/work-tracker/bin/wt` and its `reference/`, for a
+harness to lay into an agent's skills folder.
+
+### Starting agents (optional)
+
+With `WAYPOINT_WORKERS_URL` and `WAYPOINT_WORKERS_TOKEN` set, waypoint starts
+agents through a worker-service: `POST /items/{id}/assignment` asks for one on
+an item, and every 5 minutes the dispatcher starts queued items up to the
+running limit (`PATCH /queue`). Without them it never calls out: queued items
+wait, and starting one answers 503.
 
 ## Developing
 
