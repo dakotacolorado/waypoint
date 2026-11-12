@@ -24,4 +24,4 @@ Each stored record is its JSON in SQLite.
 Colocated as `*.spec.ts`; test our rules, not the library's. The checks are
 `npm run typecheck`, `npm test` and `npm run build`. Store tests run on a real
 SQLite database in memory (`src/fake-store.ts`).
-How to run the checks, and where beta and prod run: `.claude/skills/test/SKILL.md`.
+How to run the checks: `.claude/skills/test/SKILL.md`.
