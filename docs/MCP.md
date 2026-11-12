@@ -3,7 +3,7 @@
 <!-- Generated from src/mcp.ts by `npm run spec`; do not edit. -->
 
 Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes a bearer token, as the API does,
-and may send `claimed-by`: each tool is one API request made with them, so it is refused, recorded and
+and may send `x-actor`: each tool is one API request made with them, so it is refused, recorded and
 answered as that request would be. A refusal comes back as the tool's error, with the API's status and words.
 
 ```json
@@ -24,222 +24,167 @@ answered as that request would be. A refusal comes back as the tool's error, wit
 
 What the server tells an agent when it connects:
 
-> waypoint tracks work as epics, stories and tasks. An epic has no parent, every story has an epic, every task has a story.
+> waypoint is a task tracker with dependency and status management.
 >
-> - A parent's status is derived from its open children: move the children, never the parent.
-> - Dependencies are between siblings only. An item moves to in_progress, review or done only once blockedBy is empty.
-> - Close an item (update_item with state closed and a closedReason) rather than delete it.
-> - Say what you did on an item with add_work_log; talk to people about it with add_comment.
-> - Every tool takes an id as the full id or a prefix of at least 8 characters, such as its shortId.
+> - status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.
+> - A task is ready when it is in backlog and every task it depends on is closed.
+> - A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.
+> - In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.
+> - A task ID may be given as its shortId.
 
 ## Tools
 
 | Tool | Does | Reads only |
 | --- | --- | --- |
-| [`list_items`](#list_items) | List items | yes |
-| [`get_item`](#get_item) | Get an item | yes |
-| [`create_item`](#create_item) | Create an item |  |
-| [`update_item`](#update_item) | Update an item |  |
-| [`delete_item`](#delete_item) | Delete an item |  |
-| [`item_history`](#item_history) | An item's history | yes |
-| [`list_comments`](#list_comments) | An item's comments | yes |
-| [`add_comment`](#add_comment) | Comment on an item |  |
-| [`list_work_log`](#list_work_log) | An item's work log | yes |
-| [`add_work_log`](#add_work_log) | Log work on an item |  |
-| [`tick_criterion`](#tick_criterion) | Tick a criterion |  |
-| [`untick_criterion`](#untick_criterion) | Untick a criterion |  |
-| [`list_tags`](#list_tags) | List tags | yes |
-| [`create_tag`](#create_tag) | Create a tag |  |
-| [`update_tag`](#update_tag) | Update a tag |  |
-| [`tag_item`](#tag_item) | Tag an item |  |
-| [`untag_item`](#untag_item) | Untag an item |  |
-| [`get_queue`](#get_queue) | The queue | yes |
-| [`start_item`](#start_item) | Start an agent on an item |  |
+| [`list_tasks`](#list_tasks) | List tasks | yes |
+| [`create_task`](#create_task) | Create a task |  |
+| [`get_task`](#get_task) | Get a task | yes |
+| [`update_task`](#update_task) | Update a task |  |
+| [`delete_task`](#delete_task) | Delete a task |  |
+| [`list_task_history`](#list_task_history) | List a task's history | yes |
+| [`list_comments`](#list_comments) | List comments | yes |
+| [`create_comment`](#create_comment) | Create a comment |  |
+| [`list_labels`](#list_labels) | List labels | yes |
+| [`create_label`](#create_label) | Create a label |  |
+| [`get_label`](#get_label) | Get a label | yes |
+| [`update_label`](#update_label) | Update a label |  |
+| [`delete_label`](#delete_label) | Delete a label |  |
 
-### list_items
+### list_tasks
 
-Items matching every filter given, as GET /items. With no filter, every item, open and closed.
+Returns tasks matching every filter given, oldest first. Cancelled tasks are left out unless status is cancelled or includeCancelled is true.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  |  |
-| `state` | `open`, `closed` |  | `open` for only what still needs looking at. |
-| `type` | `epic`, `story`, `task` |  |  |
-| `parent` | string |  | Only the children of this item. |
-| `heldBy` | string |  | Only items held by this name. |
-| `tag` | string |  | Only items carrying this tag, by id or value. |
-| `queued` | boolean |  | true: only queued items, in queue order. |
+| `status` | `backlog`, `in_progress`, `review`, `done`, `cancelled` |  | Only tasks with this status. |
+| `ready` | boolean |  | true for only tasks that can be started now. |
+| `label` | string |  | Only tasks with this label, by ID or name. |
+| `assignee` | string |  | Only tasks assigned to this; none for unassigned tasks. |
+| `includeCancelled` | boolean |  |  |
+| `maxResults` | integer |  | The most results to return. Default 100. |
+| `nextToken` | string |  | The nextToken from the previous page. |
 
-### get_item
+### create_task
 
-One item, with its derived status, blockedBy and children, as GET /items/{id}.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-
-### create_item
-
-Creates an epic, story or task, as POST /items. A story needs an epic as parent, a task a story; an epic has none.
+Creates a task in backlog, unless status says otherwise.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `type` | `epic`, `story`, `task` |  |  |
-| `title` | string | yes |  |
-| `body` | string |  |  |
-| `acceptanceCriteria` | string or object[] |  | One per criterion, each a text; they are given ids `c1`, `c2`, … in order. |
-| `status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
-| `parent` | string or null |  | A story for a task, an epic for a story, null only for an epic. |
-| `dependsOn` | string[] |  |  |
+| `title` | string | yes | A short name for the task. |
+| `description` | string |  | What the task is, in Markdown. |
+| `status` | `backlog`, `in_progress`, `review`, `done`, `cancelled` |  | Where it stands. `done` and `cancelled` are the closed statuses. |
+| `dependsOn` | string[] |  | The IDs of the tasks this one waits on. |
+| `subtasks` | object[] |  | The steps of the work, in order. On update this is the whole list: a subtask left out is removed. |
+| `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
+| `labels` | string[] |  | Labels, each by ID or name. |
+| `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+| `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
 
-### update_item
+### get_task
 
-Changes the fields given in `changes`, as PATCH /items/{id}: status, title, body, criteria, parent, dependencies, queued; close it with state closed and a closedReason.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `changes` | object | yes |  |
-| `changes.type` | `epic`, `story`, `task` |  |  |
-| `changes.title` | string |  |  |
-| `changes.body` | string |  |  |
-| `changes.acceptanceCriteria` | string or object[] |  | Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. An id the item does not have is refused with 400. |
-| `changes.met` | string[] |  | Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400. |
-| `changes.status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
-| `changes.state` | `open`, `closed` |  | Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`. |
-| `changes.closedReason` | `completed`, `not_planned` |  | Required with, and only with, `state: closed`. |
-| `changes.parent` | string or null |  |  |
-| `changes.dependsOn` | string[] |  |  |
-| `changes.reviewedBy` | string or null |  | The worker reviewing the item, as the reviewer's own name; null clears it. |
-| `changes.force` | `true` |  | Move the item to `in_progress`, `review` or `done` though its `blockedBy` is not empty, recorded as the history entry's `overrode`. The person's alone: refused with 403 from a write that sends `claimed-by`, as every worker's does. Changes nothing on its own. |
-| `changes.queued` | boolean |  | `true` queues the item to start on its own, at the back of the queue, or keeps its place if already queued; `false` takes it off. Only an open epic, story or task that reads `backlog` or `ready` can be queued, as this write leaves it: any other is refused with 400, naming why. Recorded in `history` as a change to `queuedAt`. |
-| `changes.tags` | any |  | Not accepted: refused with 400 whatever its value. See `WorkItem.tags`. |
-
-### delete_item
-
-Deletes an item no other item names, as DELETE /items/{id}. Prefer closing it.
+Returns a task.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
 
-### item_history
+### update_task
 
-Every write to the item and beneath it, oldest first, as GET /items/{id}/history.
+Changes the fields given. Cancelling a task cancels its open subtasks.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
+| `title` | string |  | A short name for the task. |
+| `description` | string |  | What the task is, in Markdown. |
+| `status` | `backlog`, `in_progress`, `review`, `done`, `cancelled` |  | Where it stands. `done` and `cancelled` are the closed statuses. |
+| `dependsOn` | string[] |  | The IDs of the tasks this one waits on. |
+| `subtasks` | object[] |  | The steps of the work, in order. On update this is the whole list: a subtask left out is removed. |
+| `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
+| `labels` | string[] |  | Labels, each by ID or name. |
+| `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+
+### delete_task
+
+Deletes a task no other task depends on. To close a task instead, set its status to cancelled.
+
+| Input | Type | Required | |
+| --- | --- | --- | --- |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
+
+### list_task_history
+
+Returns every write to the task, oldest first.
+
+| Input | Type | Required | |
+| --- | --- | --- | --- |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
+| `maxResults` | integer |  | The most results to return. Default 100. |
+| `nextToken` | string |  | The nextToken from the previous page. |
 
 ### list_comments
 
-What people and agents said about the item, oldest first, as GET /items/{id}/comments.
+Returns a task's comments, oldest first.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
+| `maxResults` | integer |  | The most results to return. Default 100. |
+| `nextToken` | string |  | The nextToken from the previous page. |
 
-### add_comment
+### create_comment
 
-Adds a comment to the item, as POST /items/{id}/comments.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `body` | string | yes | Markdown. |
-
-### list_work_log
-
-What was done on the item, oldest first, as GET /items/{id}/work-log.
+Adds a comment to a task. A comment changes none of the task's fields.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
+| `taskId` | string | yes | The task's ID, or a prefix of it at least 8 characters long, such as its shortId. |
+| `body` | string | yes | The comment, in Markdown. |
+| `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
 
-### add_work_log
+### list_labels
 
-Records what was done on the item, with links to what it made, as POST /items/{id}/work-log.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `body` | string | yes | Markdown. |
-| `links` | string[] |  |  |
-
-### tick_criterion
-
-Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.
+Returns labels by name.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `criterion` | string | yes | The criterion's id, as `c2`, or its text when unique. |
+| `maxResults` | integer |  | The most results to return. Default 100. |
+| `nextToken` | string |  | The nextToken from the previous page. |
 
-### untick_criterion
+### create_label
 
-Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `criterion` | string | yes | The criterion's id, as `c2`, or its text when unique. |
-
-### list_tags
-
-Every tag: its value, colour and description, as GET /tags.
-
-No input.
-
-### create_tag
-
-Adds a tag to the shared list, as POST /tags.
+Creates a label.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `value` | string | yes |  |
-| `color` | string | yes |  |
-| `description` | string |  | What the tag is for, shown when hovering its chip. |
+| `name` | string | yes | The label's name, unique ignoring case. |
+| `color` | string |  | Its colour, as `#rrggbb`. Default `#808080`. |
+| `description` | string |  | What the label is for. |
+| `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
 
-### update_tag
+### get_label
 
-Changes a tag's value, colour or description, as PATCH /tags/{id}.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The tag's id. |
-| `changes` | object | yes |  |
-| `changes.value` | string |  |  |
-| `changes.color` | string |  |  |
-| `changes.description` | string |  | What the tag is for, shown when hovering its chip. |
-
-### tag_item
-
-Puts a tag, by id or value, on the item and everything beneath it, as POST /items/{id}/tags.
+Returns a label.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `tag` | string | yes |  |
+| `labelId` | string | yes | The label's ID or name. |
 
-### untag_item
+### update_label
 
-Takes a tag, by id or value, off the item and everything beneath it, as DELETE /items/{id}/tags/{tag}.
-
-| Input | Type | Required | |
-| --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `tag` | string | yes |  |
-
-### get_queue
-
-What the queue is running, what waits in it and why, and its running limit, as GET /queue.
-
-No input.
-
-### start_item
-
-Asks the configured worker-service for an agent on the item, as POST /items/{id}/assignment; refused when none is configured.
+Changes the fields given.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
+| `labelId` | string | yes | The label's ID or name. |
+| `name` | string |  | The label's name, unique ignoring case. |
+| `color` | string |  | Its colour, as `#rrggbb`. Default `#808080`. |
+| `description` | string |  | What the label is for. |
+
+### delete_label
+
+Deletes a label and removes it from every task that has it.
+
+| Input | Type | Required | |
+| --- | --- | --- | --- |
+| `labelId` | string | yes | The label's ID or name. |

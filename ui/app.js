@@ -1,11 +1,10 @@
-// waypoint's page: the board, an item, and a form for a new one, over the same API agents use.
-// Every element is made with `h`, which sets text, never HTML, so nothing an item says is run.
+// waypoint's page: the board, a task, and a form for a new one, over the API.
+// Every element is made with `h`, which sets text, never HTML, so nothing a task says is run.
 
-import { EMOJI, LETTERS, PIN_SVG, SUMMARY, TAGLINE } from "./banner.js";
+import { LETTERS, PIN_SVG, STATUSES, SUMMARY, TAGLINE } from "./banner.js";
 
-const STATUSES = ["backlog", "ready", "in_progress", "review", "done"];
-const TYPES = ["epic", "story", "task"];
-const PARENT = { epic: null, story: "epic", task: "story" };
+const OPEN = STATUSES.filter((status) => status !== "cancelled");
+const CLOSED = ["done", "cancelled"];
 const TOKEN_KEY = "waypoint.token";
 
 const main = document.getElementById("main");
@@ -27,16 +26,15 @@ function h(tag, props = {}, ...children) {
 
 const token = () => localStorage.getItem(TOKEN_KEY);
 
-/** Where this page is served, as `https://host/waypoint/`: the base of the API and the MCP server too. */
+/** Where this page is served, as `https://host:8444/`: the base of the API and the MCP server too. */
 const base = () => `${location.origin}${location.pathname}`;
 
-/** The block-letter name with the pin beside it; `small` above the board. The SVG is the server's own constant, not anything an item says. */
+/** The block-letter name with the pin beside it. The SVG is the server's own constant, not anything a task says. */
 function wordmark(small = false) {
   const pin = new DOMParser().parseFromString(PIN_SVG, "image/svg+xml").documentElement;
   return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), document.importNode(pin, true));
 }
 
-/** The page's own landing: the mark, what waypoint is, and where its API and MCP server answer. */
 function landing(small) {
   return h(
     "div",
@@ -48,7 +46,7 @@ function landing(small) {
       "p",
       { class: "endpoints muted" },
       "API ",
-      h("code", {}, `${base()}items`),
+      h("code", {}, `${base()}tasks`),
       " · MCP ",
       h("code", {}, `${base()}mcp`),
       " · docs: ",
@@ -61,7 +59,7 @@ function landing(small) {
 
 class ApiError extends Error {
   constructor(status, body) {
-    super(body?.error ?? `HTTP ${status}`);
+    super(body?.message ?? `HTTP ${status}`);
     this.status = status;
   }
 }
@@ -76,11 +74,23 @@ async function api(method, path, body) {
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
     route();
-    throw new ApiError(401, { error: "That token is not one this server knows." });
+    throw new ApiError(401, { message: "That token is not one this server knows." });
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data);
   return data;
+}
+
+/** Every page of a list operation, as one array. */
+async function all(path, key) {
+  const items = [];
+  let next = null;
+  do {
+    const page = await api("GET", `${path}${path.includes("?") ? "&" : "?"}maxResults=500${next ? `&nextToken=${next}` : ""}`);
+    items.push(...page[key]);
+    next = page.nextToken;
+  } while (next);
+  return items;
 }
 
 const when = (iso) => new Date(iso).toLocaleString();
@@ -91,7 +101,7 @@ const show = (box, err) => {
   box.textContent = err.message;
 };
 
-/** Runs `fn`, showing what refused it in `box`, then rerenders the page. */
+/** Runs `fn`, showing what refused it in `box`, then redraws the page. */
 async function act(box, fn) {
   try {
     await fn();
@@ -101,12 +111,16 @@ async function act(box, fn) {
   }
 }
 
-function badge(type) {
-  return h("span", { class: `badge ${type}` }, type);
+function chips(task, labels) {
+  return task.labels.map((id) => labels.get(id)).filter(Boolean).map((each) => h("span", { class: "tag", style: `background:${each.color}`, title: each.description }, each.name));
 }
 
-function tagChips(item, tags) {
-  return item.tags.map((id) => tags.get(id)).filter(Boolean).map((tag) => h("span", { class: "tag", style: `background:${tag.color}`, title: tag.description }, tag.value));
+/** How far a task's subtasks have got, naming cancelled ones apart from done. */
+function progress(task) {
+  if (!task.subtasks.length) return null;
+  const done = task.subtasks.filter((sub) => sub.status === "done").length;
+  const cancelled = task.subtasks.filter((sub) => sub.status === "cancelled").length;
+  return `${done} done${cancelled ? `, ${cancelled} cancelled` : ""} of ${task.subtasks.length} subtasks`;
 }
 
 function signIn() {
@@ -116,12 +130,12 @@ function signIn() {
   const form = h(
     "form",
     {
-      class: "panel signin",
+      class: "panel",
       onsubmit: async (event) => {
         event.preventDefault();
         localStorage.setItem(TOKEN_KEY, input.value.trim());
         try {
-          await api("GET", "/tags");
+          await api("GET", "/labels?maxResults=1");
           route();
         } catch (err) {
           show(box, err);
@@ -139,201 +153,180 @@ function signIn() {
 }
 
 async function board(params) {
-  const type = params.get("type") ?? "";
-  const under = params.get("under") ?? "";
   const closed = params.get("closed") === "1";
-  const [{ items }, { tags }] = await Promise.all([api("GET", "/items"), api("GET", "/tags")]);
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const tagMap = new Map(tags.map((tag) => [tag.id, tag]));
-  const beneath = (item, top) => {
-    for (let at = item.parent; at; at = byId.get(at)?.parent) if (at === top) return true;
-    return false;
-  };
-  const shown = items
-    .filter((item) => closed || item.state === "open")
-    .filter((item) => !type || item.type === type)
-    .filter((item) => !under || beneath(item, under));
+  const only = params.get("label") ?? "";
+  const [tasks, labelList] = await Promise.all([all(`/tasks${closed ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
+  const labels = new Map(labelList.map((each) => [each.id, each]));
+  const shown = tasks.filter((task) => !only || task.labels.includes(only));
   const set = (key, value) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
     location.hash = `#/?${next}`;
   };
-  const epics = items.filter((item) => item.type === "epic" && item.state === "open");
   const filters = h(
     "div",
     { class: "filters" },
-    h("select", { onchange: (e) => set("type", e.target.value) }, h("option", { value: "" }, "Every type"), TYPES.map((t) => h("option", { value: t, selected: t === type }, `${t}s`))),
-    h(
-      "select",
-      { onchange: (e) => set("under", e.target.value) },
-      h("option", { value: "" }, "Under any epic"),
-      epics.map((epic) => h("option", { value: epic.id, selected: epic.id === under }, `${epic.shortId} ${epic.title}`)),
-    ),
-    h("label", { style: "margin:0;text-transform:none;letter-spacing:0;display:flex;gap:6px;align-items:center" }, h("input", { type: "checkbox", checked: closed, onchange: (e) => set("closed", e.target.checked ? "1" : "") }), "Show closed"),
-    h("span", { class: "muted" }, `${shown.length} of ${items.length} items`),
+    h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name))),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: closed, onchange: (e) => set("closed", e.target.checked ? "1" : "") }), "Show cancelled"),
+    h("span", { class: "muted" }, `${shown.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
   );
-  const columns = STATUSES.map((status) => {
-    const here = shown.filter((item) => item.status === status).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const columns = (closed ? STATUSES : OPEN).map((status) => {
+    const here = shown.filter((task) => task.status === status);
     return h(
       "section",
       { class: "column" },
       h("h2", {}, h("span", {}, label(status)), h("span", {}, here.length)),
-      here.map((item) =>
+      here.map((task) =>
         h(
           "a",
-          { class: "card", href: `#/item/${item.shortId}` },
-          h("div", { class: "title" }, item.title),
+          { class: "card", href: `#/task/${task.shortId}` },
+          h("div", { class: "title" }, task.title),
           h(
             "div",
             { class: "meta" },
-            badge(item.type),
-            h("span", {}, item.shortId),
-            item.state === "closed" && h("span", { class: "badge closed" }, item.closedReason.replace("_", " ")),
-            item.blockedBy.length > 0 && h("span", { class: "badge blocked" }, `blocked by ${item.blockedBy.length}`),
-            item.heldBy && h("span", {}, `· ${item.heldBy}`),
-            item.parent && byId.get(item.parent) && h("span", {}, `· ${byId.get(item.parent).title}`),
-            tagChips(item, tagMap),
+            h("span", {}, task.shortId),
+            task.ready && h("span", { class: "badge ready" }, "ready"),
+            task.blockedBy.length > 0 && h("span", { class: "badge blocked" }, `blocked by ${task.blockedBy.length}`),
+            task.assignee && h("span", {}, `· ${task.assignee}`),
+            progress(task) && h("span", {}, `· ${progress(task)}`),
+            chips(task, labels),
           ),
         ),
       ),
     );
   });
-  main.replaceChildren(landing(true), filters, h("div", { class: "board" }, columns));
+  main.replaceChildren(landing(true), filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
 
-async function itemPage(ref) {
-  const item = await api("GET", `/items/${encodeURIComponent(ref)}`);
-  const [{ items }, { tags }, { comments }, { entries: log }, { entries: history }] = await Promise.all([
-    api("GET", "/items"),
-    api("GET", "/tags"),
-    api("GET", `/items/${item.id}/comments`),
-    api("GET", `/items/${item.id}/work-log`),
-    api("GET", `/items/${item.id}/history`),
+async function taskPage(ref) {
+  const { task } = await api("GET", `/tasks/${encodeURIComponent(ref)}`);
+  const [tasks, labelList, comments, history] = await Promise.all([
+    all("/tasks?includeCancelled=true", "tasks"),
+    all("/labels", "labels"),
+    all(`/tasks/${task.id}/comments`, "comments"),
+    all(`/tasks/${task.id}/history`, "entries"),
   ]);
-  const byId = new Map(items.map((each) => [each.id, each]));
-  const tagMap = new Map(tags.map((tag) => [tag.id, tag]));
+  const byId = new Map(tasks.map((each) => [each.id, each]));
+  const labels = new Map(labelList.map((each) => [each.id, each]));
   const link = (id) => {
     const other = byId.get(id);
-    return other ? h("a", { href: `#/item/${other.shortId}` }, `${other.shortId} ${other.title}`) : h("span", { class: "muted" }, id.slice(0, 8));
+    return other ? h("a", { href: `#/task/${other.shortId}` }, `${other.shortId} ${other.title}`, h("span", { class: "muted" }, ` · ${label(other.status)}`)) : h("span", { class: "muted" }, id.slice(0, 8));
   };
-  const crumbs = [];
-  for (let at = item.parent; at; at = byId.get(at)?.parent) crumbs.unshift(link(at), " / ");
   const box = errorBox();
-  const patch = (changes) => act(box, () => api("PATCH", `/items/${item.id}`, changes));
-  const parentOf = item.children.length > 0;
+  const update = (changes) => act(box, () => api("PATCH", `/tasks/${task.id}`, changes));
 
   const head = h(
     "div",
     { class: "panel" },
-    h("div", { class: "crumbs" }, crumbs),
-    h("h1", {}, item.title),
+    h("h1", {}, task.title),
     h(
       "div",
       { class: "meta" },
-      badge(item.type),
-      h("span", {}, item.shortId),
-      h("span", {}, `· ${label(item.status)}${parentOf ? " (from its children)" : ""}`),
-      item.state === "closed" && h("span", { class: "badge closed" }, `closed: ${item.closedReason.replace("_", " ")}`),
-      item.heldBy && h("span", {}, `· held by ${item.heldBy}`),
-      tagChips(item, tagMap),
+      h("span", {}, task.shortId),
+      h("span", {}, `· ${label(task.status)}`),
+      task.ready && h("span", { class: "badge ready" }, "ready"),
+      task.blockedBy.length > 0 && h("span", { class: "badge blocked" }, `blocked by ${task.blockedBy.length}`),
+      chips(task, labels),
     ),
     box,
     h(
       "div",
       { class: "row" },
-      h(
-        "select",
-        { disabled: parentOf, title: parentOf ? "A parent's status follows its children: move them." : "", onchange: (e) => patch({ status: e.target.value }) },
-        STATUSES.map((status) => h("option", { value: status, selected: status === item.status }, label(status))),
-      ),
-      item.state === "open"
-        ? [
-            h("button", { onclick: () => patch({ state: "closed", closedReason: "completed" }) }, "Close as completed"),
-            h("button", { onclick: () => patch({ state: "closed", closedReason: "not_planned" }) }, "Close as not planned"),
-          ]
-        : h("button", { onclick: () => patch({ state: "open" }) }, "Reopen"),
-      item.type !== "task" && h("a", { href: `#/new?parent=${item.shortId}` }, `+ New ${item.type === "epic" ? "story" : "task"}`),
-      h("button", { onclick: () => editForm(item) }, "Edit"),
+      h("select", { onchange: (e) => update({ status: e.target.value }) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
+      CLOSED.includes(task.status)
+        ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
+        : [h("button", { onclick: () => update({ status: "done" }) }, "Close as completed"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Close as cancelled")],
+      h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
+    ),
+    h(
+      "div",
+      { class: "row" },
+      h("span", { class: "muted" }, "Assignee"),
+      h("input", { value: task.assignee ?? "", placeholder: "no one", onchange: (e) => update({ assignee: e.target.value.trim() || null }) }),
     ),
   );
 
-  const body = h("div", { class: "panel" }, h("h2", {}, "Body"), item.body ? h("div", { class: "body" }, item.body) : h("div", { class: "muted" }, "Nothing written."));
+  const description = h("div", { class: "panel" }, h("h2", {}, "Description"), task.description ? h("div", { class: "body" }, task.description) : h("div", { class: "muted" }, "Nothing written."));
 
-  const met = new Map(item.met.map((tick) => [tick.criterion, tick]));
+  const met = task.criteria.filter((criterion) => criterion.met).length;
   const criteria = h(
     "div",
     { class: "panel" },
-    h("h2", {}, `Acceptance criteria (${met.size}/${item.acceptanceCriteria.length})`),
-    item.acceptanceCriteria.length === 0
+    h("h2", {}, `Acceptance criteria (${met}/${task.criteria.length})`),
+    task.criteria.length === 0
       ? h("div", { class: "muted" }, "None.")
       : h(
           "ul",
           { class: "plain" },
-          item.acceptanceCriteria.map((criterion) => {
-            const tick = met.get(criterion.id);
-            return h(
+          task.criteria.map((criterion) =>
+            h(
               "li",
               {},
               h(
                 "label",
-                { style: "display:flex;gap:8px;margin:0;text-transform:none;letter-spacing:0;font-size:14px;color:inherit" },
+                { class: "check" },
                 h("input", {
                   type: "checkbox",
-                  checked: Boolean(tick),
-                  onchange: (e) => act(box, () => api(e.target.checked ? "POST" : "DELETE", `/items/${item.id}/met`, { criterion: criterion.id })),
+                  checked: criterion.met,
+                  // Only this entry says `met`, so a tick another caller makes meanwhile stands.
+                  onchange: (e) => update({ criteria: task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, met: e.target.checked } : { id: each.id })) }),
                 }),
-                h("span", {}, criterion.text, tick && h("span", { class: "muted" }, ` · ${tick.by ?? "the person"}, ${when(tick.at)}`)),
+                h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${criterion.metBy ?? "admin"}, ${when(criterion.metAt)}`)),
               ),
-            );
-          }),
-        ),
-  );
-
-  const children = h(
-    "div",
-    { class: "panel" },
-    h("h2", {}, item.type === "epic" ? "Stories" : item.type === "story" ? "Tasks" : "Children"),
-    item.children.length === 0
-      ? h("div", { class: "muted" }, "None.")
-      : h(
-          "ul",
-          { class: "plain" },
-          item.children.map((id) => byId.get(id)).filter(Boolean).map((child) =>
-            h("li", {}, link(child.id), h("span", { class: "muted" }, ` · ${label(child.status)}${child.state === "closed" ? `, closed ${child.closedReason.replace("_", " ")}` : ""}`)),
+            ),
           ),
         ),
   );
 
-  const note = (entry) =>
+  const keep = task.subtasks.map((sub) => ({ id: sub.id }));
+  const newSubtask = h("input", { placeholder: "New subtask", style: "flex:1" });
+  const subtasks = h(
+    "div",
+    { class: "panel" },
+    h("h2", {}, `Subtasks${task.subtasks.length ? ` (${progress(task).replace(/ subtasks$/, "")})` : ""}`),
+    task.subtasks.length === 0
+      ? h("div", { class: "muted" }, "None.")
+      : h(
+          "ul",
+          { class: "plain" },
+          task.subtasks.map((sub) =>
+            h(
+              "li",
+              { class: "subtask" },
+              h(
+                "select",
+                { onchange: (e) => update({ subtasks: task.subtasks.map((each) => (each.id === sub.id ? { id: each.id, status: e.target.value } : { id: each.id })) }) },
+                STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
+              ),
+              h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
+              sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `after ${sub.dependsOn.join(", ")}`),
+              sub.description && h("div", { class: "muted body" }, sub.description),
+            ),
+          ),
+        ),
     h(
-      "div",
-      { class: "note" },
-      h("div", { class: "who" }, `${entry.author ?? "the person"} · ${when(entry.at)}`),
-      h("div", { class: "body" }, entry.body),
-      (entry.links ?? []).map((url) => h("div", {}, h("a", { href: url, target: "_blank", rel: "noreferrer" }, url))),
-    );
-  const noteForm = (path, extra) => {
-    const text = h("textarea", { placeholder: "Markdown" });
-    const links = extra ? h("input", { placeholder: "Links, space-separated", style: "width:100%;margin-top:6px" }) : null;
-    return h(
       "form",
-      {
-        onsubmit: (e) => {
-          e.preventDefault();
-          act(box, () => api("POST", path, { body: text.value, ...(links && { links: links.value.split(/\s+/).filter(Boolean) }) }));
-        },
-      },
+      { class: "row", onsubmit: (e) => (e.preventDefault(), newSubtask.value.trim() && update({ subtasks: [...keep, { title: newSubtask.value.trim() }] })) },
+      newSubtask,
+      h("button", { type: "submit" }, "Add"),
+    ),
+  );
+
+  const text = h("textarea", { placeholder: "Markdown" });
+  const talk = h(
+    "div",
+    { class: "panel" },
+    h("h2", {}, "Comments"),
+    comments.map((comment) => h("div", { class: "note" }, h("div", { class: "who" }, `${comment.author ?? "admin"} · ${when(comment.createdAt)}`), h("div", { class: "body" }, comment.body))),
+    h(
+      "form",
+      { onsubmit: (e) => (e.preventDefault(), act(box, () => api("POST", `/tasks/${task.id}/comments`, { body: text.value }))) },
       text,
-      links,
-      h("div", { class: "row" }, h("button", { type: "submit" }, "Add")),
-    );
-  };
+      h("div", { class: "row" }, h("button", { type: "submit" }, "Comment")),
+    ),
+  );
 
-  const talk = h("div", { class: "panel" }, h("h2", {}, "Comments"), comments.map(note), noteForm(`/items/${item.id}/comments`, false));
-  const work = h("div", { class: "panel" }, h("h2", {}, "Work log"), log.map(note), noteForm(`/items/${item.id}/work-log`, true));
-
-  const tagSelect = h("select", {}, h("option", { value: "" }, "Add a tag…"), tags.filter((tag) => !item.tags.includes(tag.id)).map((tag) => h("option", { value: tag.id }, tag.value)));
   const side = h(
     "div",
     {},
@@ -341,36 +334,58 @@ async function itemPage(ref) {
       "div",
       { class: "panel" },
       h("h2", {}, "Depends on"),
-      item.dependsOn.length === 0 ? h("div", { class: "muted" }, "Nothing.") : h("ul", { class: "plain" }, item.dependsOn.map((id) => h("li", {}, link(id)))),
-      item.blockedBy.length > 0 && [h("h2", { style: "margin-top:12px" }, "Blocked by"), h("ul", { class: "plain" }, item.blockedBy.map((id) => h("li", {}, link(id))))],
-    ),
-    h(
-      "div",
-      { class: "panel" },
-      h("h2", {}, "Tags"),
-      h("div", { class: "row", style: "margin-top:0" }, item.tags.map((id) => tagMap.get(id)).filter(Boolean).map((tag) =>
-        h("span", { class: "tag", style: `background:${tag.color}` }, tag.value, " ", h("a", { href: "#", style: "color:#fff", title: "Take it off", onclick: (e) => { e.preventDefault(); act(box, () => api("DELETE", `/items/${item.id}/tags/${tag.id}`)); } }, "×")),
-      )),
-      h("div", { class: "row" }, tagSelect, h("button", { onclick: () => tagSelect.value && act(box, () => api("POST", `/items/${item.id}/tags`, { tag: tagSelect.value })) }, "Add")),
+      task.dependsOn.length === 0 ? h("div", { class: "muted" }, "Nothing.") : h("ul", { class: "plain" }, task.dependsOn.map((id) => h("li", {}, link(id)))),
+      (() => {
+        const dependents = tasks.filter((other) => other.dependsOn.includes(task.id));
+        return dependents.length > 0 && [h("h2", { style: "margin-top:12px" }, "Waited on by"), h("ul", { class: "plain" }, dependents.map((other) => h("li", {}, link(other.id))))];
+      })(),
     ),
     h(
       "div",
       { class: "panel" },
       h("details", {}, h("summary", {}, `History (${history.length})`), h("ul", { class: "plain" }, history.slice().reverse().map((entry) =>
-        h("li", {}, h("div", { class: "who muted" }, `${entry.action}${entry.item !== item.id ? ` ${byId.get(entry.item)?.shortId ?? entry.item.slice(0, 8)}` : ""} · ${entry.claimedBy ?? "the person"} · ${when(entry.at)}`), h("div", {}, entry.changes.map((change) => change.field).join(", "))),
+        h("li", {}, h("div", { class: "who muted" }, `${entry.action} · ${entry.actor ?? "admin"} · ${when(entry.at)}`), h("div", {}, entry.changes.map((change) => change.field).join(", "))),
       ))),
     ),
   );
-  main.replaceChildren(h("div", { class: "item" }, h("div", {}, head, body, criteria, children, talk, work), side));
+  main.replaceChildren(h("div", { class: "item" }, h("div", {}, head, description, criteria, subtasks, talk), side));
 }
 
-function editForm(item) {
-  const title = h("input", { value: item.title, style: "width:100%" });
-  const body = h("textarea", { style: "min-height:200px" });
-  body.value = item.body;
+/** A multi-select of `options`, each `[value, text]`, with `chosen` selected. */
+const many = (options, chosen) => h("select", { multiple: true, size: Math.min(6, Math.max(2, options.length)) }, options.map(([value, text]) => h("option", { value, selected: chosen.includes(value) }, text)));
+const picked = (select) => [...select.selectedOptions].map((option) => option.value);
+
+function fields(task, tasks, labelList) {
+  const title = h("input", { value: task?.title ?? "", style: "width:100%", required: true });
+  const description = h("textarea", { style: "min-height:160px" });
+  description.value = task?.description ?? "";
   const criteria = h("textarea", {});
-  // A line left as it was keeps its criterion's id and tick: the API matches it by its text.
-  criteria.value = item.acceptanceCriteria.map((criterion) => criterion.text).join("\n");
+  criteria.value = (task?.criteria ?? []).map((criterion) => criterion.text).join("\n");
+  const dependsOn = many(tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
+  const labels = many(labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
+  const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
+  return {
+    nodes: [
+      h("label", {}, "Title"), title,
+      h("label", {}, "Description"), description,
+      h("label", {}, "Acceptance criteria, one a line"), criteria,
+      h("label", {}, "Depends on"), dependsOn,
+      h("label", {}, "Labels"), labels,
+    ],
+    value: () => {
+      // A line left as it was keeps its criterion, and whether it is met.
+      const current = [...(task?.criteria ?? [])];
+      const list = lines(criteria).map((text) => {
+        const at = current.findIndex((criterion) => criterion.text === text);
+        return at === -1 ? { text } : { id: current.splice(at, 1)[0].id };
+      });
+      return { title: title.value, description: description.value, criteria: list, dependsOn: picked(dependsOn), labels: picked(labels) };
+    },
+  };
+}
+
+function editForm(task, tasks, labelList) {
+  const form = fields(task, tasks, labelList);
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -380,48 +395,26 @@ function editForm(item) {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            await api("PATCH", `/items/${item.id}`, { title: title.value, body: body.value, acceptanceCriteria: criteria.value.split("\n").map((line) => line.trim()).filter(Boolean) });
-            location.hash = `#/item/${item.shortId}`;
+            await api("PATCH", `/tasks/${task.id}`, form.value());
+            location.hash = `#/task/${task.shortId}`;
             route();
           } catch (err) {
             show(box, err);
           }
         },
       },
-      h("h1", {}, `Edit ${item.shortId}`),
-      h("label", {}, "Title"),
-      title,
-      h("label", {}, "Body"),
-      body,
-      h("label", {}, "Acceptance criteria, one a line"),
-      criteria,
+      h("h1", {}, `Edit ${task.shortId}`),
+      form.nodes,
       box,
-      h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Save"), h("a", { href: `#/item/${item.shortId}` }, "Cancel")),
+      h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Save"), h("a", { href: `#/task/${task.shortId}` }, "Cancel")),
     ),
   );
 }
 
-async function newItem(params) {
-  const { items } = await api("GET", "/items?state=open");
-  const parentRef = params.get("parent");
-  const given = parentRef ? items.find((item) => item.shortId === parentRef || item.id === parentRef) : undefined;
-  const type = h("select", {}, TYPES.map((t) => h("option", { value: t, selected: given ? PARENT[t] === given.type : t === "epic" }, t)));
-  const parent = h("select", {});
-  const fillParents = () => {
-    const needs = PARENT[type.value];
-    parent.replaceChildren(
-      ...(needs === null
-        ? [h("option", { value: "" }, "None: an epic has no parent")]
-        : items.filter((item) => item.type === needs).map((item) => h("option", { value: item.id, selected: item.id === given?.id }, `${item.shortId} ${item.title}`))),
-    );
-    parent.disabled = needs === null;
-  };
-  type.addEventListener("change", fillParents);
-  fillParents();
-  const title = h("input", { style: "width:100%", required: true });
-  const body = h("textarea", { style: "min-height:160px" });
-  const criteria = h("textarea", {});
-  const status = h("select", {}, STATUSES.slice(0, 2).map((s) => h("option", { value: s }, label(s))));
+async function newTask() {
+  const [tasks, labelList] = await Promise.all([all("/tasks", "tasks"), all("/labels", "labels")]);
+  const form = fields(null, tasks, labelList);
+  const subtasks = h("textarea", {});
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -431,38 +424,22 @@ async function newItem(params) {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            const made = await api("POST", "/items", {
-              type: type.value,
-              title: title.value,
-              body: body.value,
-              status: status.value,
-              parent: parent.disabled ? null : parent.value || null,
-              acceptanceCriteria: criteria.value.split("\n").map((line) => line.trim()).filter(Boolean),
-            });
-            location.hash = `#/item/${made.shortId}`;
+            const steps = subtasks.value.split("\n").map((line) => line.trim()).filter(Boolean).map((title) => ({ title }));
+            const { task } = await api("POST", "/tasks", { ...form.value(), subtasks: steps });
+            location.hash = `#/task/${task.shortId}`;
           } catch (err) {
             show(box, err);
           }
         },
       },
-      h("h1", {}, "New item"),
-      h("label", {}, "Type"),
-      type,
-      h("label", {}, "Parent"),
-      parent,
-      h("label", {}, "Title"),
-      title,
-      h("label", {}, "Body"),
-      body,
-      h("label", {}, "Acceptance criteria, one a line"),
-      criteria,
-      h("label", {}, "Status"),
-      status,
+      h("h1", {}, "New task"),
+      form.nodes,
+      h("label", {}, "Subtasks, one a line"),
+      subtasks,
       box,
       h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Create")),
     ),
   );
-  title.focus();
 }
 
 async function route() {
@@ -471,9 +448,9 @@ async function route() {
   const [path, search = ""] = location.hash.replace(/^#/, "").split("?");
   const params = new URLSearchParams(search);
   try {
-    const item = /^\/item\/(.+)$/.exec(path ?? "");
-    if (item) await itemPage(decodeURIComponent(item[1]));
-    else if (path === "/new") await newItem(params);
+    const task = /^\/task\/(.+)$/.exec(path ?? "");
+    if (task) await taskPage(decodeURIComponent(task[1]));
+    else if (path === "/new") await newTask();
     else await board(params);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;

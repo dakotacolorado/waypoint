@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-/** Who a bearer token belongs to. Only an admin's write that names no `claimed-by` is the person's. */
+/** Who a bearer token belongs to. A write naming no `x-actor` is recorded under its name, or null for an admin. */
 export interface Caller {
   name: string;
   admin: boolean;

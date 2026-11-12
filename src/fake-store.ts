@@ -1,63 +1,17 @@
 import { DatabaseSync } from "node:sqlite";
-import { WorkItem } from "./domain.ts";
-import { WorkItemStore } from "./store.ts";
+import { Store } from "./store.ts";
 
-/**
- * The real store on a database in memory, with what tests need to reach
- * under the API: the stored items, the set's version, and a held read.
- */
-export class FakeStore extends WorkItemStore {
+/** The real store on a database in memory, with a read tests can hold so another write lands before its commit. */
+export class FakeStore extends Store {
   private held?: { read: () => void; released: Promise<void> };
-  /** Stands in for the stored version while set, as a record no write can match. */
-  private forcedVersion?: number;
+  /** Stands in for the stored version while set: NaN matches no read, so every commit is refused. */
+  forcedVersion?: number;
 
   constructor() {
     super(new DatabaseSync(":memory:"));
   }
 
-  /** Every stored item, as read back. */
-  get items(): WorkItem[] {
-    return (this.db.prepare("SELECT record FROM items ORDER BY rowid").all() as { record: string }[]).map((row) =>
-      WorkItemStore.itemFromRecord(JSON.parse(row.record) as Record<string, unknown>),
-    );
-  }
-
-  get version(): number {
-    return this.storedVersion();
-  }
-
-  set version(value: number) {
-    this.forcedVersion = value;
-  }
-
-  protected override storedVersion(): number {
-    return this.forcedVersion ?? super.storedVersion();
-  }
-
-  /** Stores the item as given, bypassing validation, as a record written by an older version would be. */
-  put(item: WorkItem): void {
-    this.db
-      .prepare("INSERT INTO items (id, record) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET record = excluded.record")
-      .run(item.id, JSON.stringify(item.toJSON()));
-  }
-
-  /** Gives a stored item `dependsOn` as written before the sibling rule, bypassing validation. */
-  depend(id: string, dependsOn: string[]): void {
-    const item = this.items.find((each) => each.id === id)!;
-    this.put(new WorkItem({ ...item.toJSON(), dependsOn }));
-  }
-
-  /** Stores the queue's settings record as given. */
-  set queueStored(record: Record<string, unknown>) {
-    this.db
-      .prepare("INSERT INTO meta (key, value) VALUES ('queue', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-      .run(JSON.stringify(record));
-  }
-
-  /**
-   * The next read returns, but its writer waits for `release` before going on,
-   * so another write can land between that read and its commit.
-   */
+  /** The next read returns, but its writer waits for `release` before committing. */
   holdNextRead(): { read: Promise<void>; release: () => void } {
     let read!: () => void;
     let release!: () => void;
@@ -76,5 +30,9 @@ export class FakeStore extends WorkItemStore {
       await held.released;
     }
     return snapshot;
+  }
+
+  protected override storedVersion(): number {
+    return this.forcedVersion ?? super.storedVersion();
   }
 }
