@@ -10,6 +10,7 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | [/health](#gethealth) | Liveness check |
+| GET | [/skill](#getskill) | Read the client workers call this deployment with |
 | GET | [/items](#getitems) | List items |
 | POST | [/items](#postitems) | Create an item |
 | GET | [/items/{id}](#getitemsid) | Read one item |
@@ -20,10 +21,13 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
 | POST | [/items/{id}/comments](#postitemsidcomments) | Comment on an item |
 | GET | [/items/{id}/work-log](#getitemsidwork-log) | Read what was done on an item |
 | POST | [/items/{id}/work-log](#postitemsidwork-log) | Record a step done on an item |
+| POST | [/items/{id}/assignment](#postitemsidassignment) | Start an agent on an item |
 | POST | [/items/{id}/tags](#postitemsidtags) | Add a tag to an item |
 | DELETE | [/items/{id}/tags/{tag}](#deleteitemsidtagstag) | Take a tag off an item |
 | POST | [/items/{id}/met](#postitemsidmet) | Tick one acceptance criterion as met |
 | DELETE | [/items/{id}/met](#deleteitemsidmet) | Untick one acceptance criterion |
+| GET | [/queue](#getqueue) | The queue: its running limit, what runs, what waits and why, and the dispatcher's last run |
+| PATCH | [/queue](#patchqueue) | Set the running limit: the person's write alone |
 | GET | [/tags](#gettags) | List tags |
 | POST | [/tags](#posttags) | Create a tag |
 | GET | [/tags/{id}](#gettagsid) | Read one tag |
@@ -35,11 +39,12 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
 | Name | Path | Description |
 | --- | --- | --- |
 | bearerAuth | [#/components/securitySchemes/bearerAuth](#componentssecurityschemesbearerauth) |  |
+| Skill | [#/components/schemas/Skill](#componentsschemasskill) |  |
+| Error | [#/components/schemas/Error](#componentsschemaserror) |  |
 | WorkItemView | [#/components/schemas/WorkItemView](#componentsschemasworkitemview) |  |
 | Tick | [#/components/schemas/Tick](#componentsschemastick) |  |
 | Assignment | [#/components/schemas/Assignment](#componentsschemasassignment) | The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status. |
 | WorkItem | [#/components/schemas/WorkItem](#componentsschemasworkitem) |  |
-| Error | [#/components/schemas/Error](#componentsschemaserror) |  |
 | Conflict | [#/components/schemas/Conflict](#componentsschemasconflict) |  |
 | Blocked | [#/components/schemas/Blocked](#componentsschemasblocked) |  |
 | Draft | [#/components/schemas/Draft](#componentsschemasdraft) |  |
@@ -52,9 +57,16 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
 | CommentDraft | [#/components/schemas/CommentDraft](#componentsschemascommentdraft) |  |
 | WorkLogEntry | [#/components/schemas/WorkLogEntry](#componentsschemasworklogentry) |  |
 | WorkLogDraft | [#/components/schemas/WorkLogDraft](#componentsschemasworklogdraft) |  |
+| Assigned | [#/components/schemas/Assigned](#componentsschemasassigned) |  |
 | TaggedItemView | [#/components/schemas/TaggedItemView](#componentsschemastaggeditemview) |  |
 | ItemTag | [#/components/schemas/ItemTag](#componentsschemasitemtag) |  |
 | Criterion | [#/components/schemas/Criterion](#componentsschemascriterion) |  |
+| Queue | [#/components/schemas/Queue](#componentsschemasqueue) |  |
+| QueueRunning | [#/components/schemas/QueueRunning](#componentsschemasqueuerunning) |  |
+| QueueItem | [#/components/schemas/QueueItem](#componentsschemasqueueitem) |  |
+| Queued | [#/components/schemas/Queued](#componentsschemasqueued) |  |
+| LastRun | [#/components/schemas/LastRun](#componentsschemaslastrun) | The dispatcher's last run; null before its first. |
+| QueuePatch | [#/components/schemas/QueuePatch](#componentsschemasqueuepatch) |  |
 | Tag | [#/components/schemas/Tag](#componentsschemastag) |  |
 | TagTaken | [#/components/schemas/TagTaken](#componentsschemastagtaken) |  |
 | TagDraft | [#/components/schemas/TagDraft](#componentsschemastagdraft) |  |
@@ -88,6 +100,58 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
   version: string
   // The commit this copy was built from: 40 hex characters, `-dirty` when its tree differed, or `unknown`.
   commit: string
+}
+```
+
+***
+
+### [GET]/skill
+
+- Summary  
+  Read the client workers call this deployment with
+
+- Operation id  
+  getSkill
+
+- Description  
+  The work-tracker skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed. Its `SKILL.md` is not here: guidance stays in document-service's `global`.
+
+- Tags  
+  meta
+
+- Security  
+  bearerAuth
+
+#### Responses
+
+- 200 The skill's files.
+
+`application/json`
+
+```typescript
+{
+  // The skill's name, which its files are under.
+  key: string
+  // The deployed tree's commit count, 0 when deployed from outside git.
+  version: integer
+  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
+  commit: string
+  files: {
+    // Under the worker's Claude Code folder: `skills/work-tracker/bin/…` or `skills/work-tracker/reference/…`.
+    path: string
+    content: string
+    executable: boolean
+  }[]
+}
+```
+
+- 401 Missing or incorrect bearer token.
+
+`application/json`
+
+```typescript
+{
+  error: string
 }
 ```
 
@@ -1058,6 +1122,120 @@ What was done.
 
 ***
 
+### [POST]/items/{id}/assignment
+
+- Summary  
+  Start an agent on an item
+
+- Operation id  
+  assignItem
+
+- Description  
+  The one way to start work on an item. In one write it records a new `assignment`, refused with 409 while the item's current one names an agent still live: not retired, and not stopped after saying `done`. On an item whose status is its own that write also moves it to `in_progress` held by the assignment's `name`, so it is refused with 409 as a move is while `blockedBy` is not empty; a parent not yet reading started is refused the same, as its Start. The item and everything beneath it leave the queue. Then worker-service makes the agent, named `name`, briefed with the item, labelled `ticket: <title>`, given the `tickets` document and stopped once it says `done`; its id is written to `assignment.agent`. A name already taken is the same agent made by an earlier try, and is taken as made. If worker-service makes none, the item is put back as it was and the refusal is answered with 502 in worker-service's words. A closed item is refused with 400.
+
+- Tags  
+  items
+
+- Security  
+  bearerAuth
+
+#### Parameters(Path)
+
+```typescript
+// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
+// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
+id: string
+```
+
+#### Headers
+
+```typescript
+// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
+// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
+claimed-by?: string //minLength: 1 //maxLength: 200
+```
+
+#### Responses
+
+- 201 The item, its `assignment` naming the agent made.
+
+`application/json`
+
+```typescript
+#/components/schemas/WorkItem & {
+   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
+   status?: enum[backlog, ready, in_progress, review, done]
+   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
+   shortId: string
+   children: string[] //format: uuid
+   blockedBy: string[] //format: uuid
+   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
+   finishedEarly: boolean
+   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
+   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
+ }
+```
+
+- 400 The request failed validation, or breaks the item graph.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 401 Missing or incorrect bearer token.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 404 No item with that id.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 409 An agent still holds the item, named in `assignment`, or is still being made; a dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
+
+`application/json`
+
+```typescript
+Partial(#/components/schemas/Assigned) & Partial(#/components/schemas/Blocked) & Partial(#/components/schemas/Conflict)
+```
+
+- 502 worker-service made no agent, in its words; the item is as it was.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 503 No address or token for worker-service is configured.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+***
+
 ### [POST]/items/{id}/tags
 
 - Summary  
@@ -1471,6 +1649,261 @@ The criterion to untick.
 
 ***
 
+### [GET]/queue
+
+- Summary  
+  The queue: its running limit, what runs, what waits and why, and the dispatcher's last run
+
+- Operation id  
+  getQueue
+
+- Description  
+  The dispatcher runs every 5 minutes: while fewer than `limit` running places are taken, it requests an implementer for each `next` item in order. A queued epic is requested once, at the epic level, and what is queued beneath it leaves the queue. A blocked item keeps its place. An agent's state is read from worker-service on each call.
+
+- Tags  
+  queue
+
+- Security  
+  bearerAuth
+
+#### Responses
+
+- 200 The queue.
+
+`application/json`
+
+```typescript
+{
+  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
+  limit: integer //minimum: 1 //maximum: 10
+  running: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // The agent the queue's request started.
+    agent: {
+      // The agent's id in worker-service, which is its request's.
+      id: string //format: uuid
+      name: string
+      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
+      state: enum[idle, working, waiting, interrupted, retired, unknown]
+    }
+    // When the queue requested it: its assignment's `at`.
+    startedAt: string
+  }[]
+  queued: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
+    position: integer | null
+    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
+    state: enum[next, blocked, requested]
+    blockedBy: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }[]
+    // While `requested`, once the request is recorded; null otherwise.
+    request: {
+      id: string //format: uuid
+      // The name its agent will have.
+      name: string
+      // Why it has not started, in worker-service's words.
+      why: string
+    }
+  }[]
+  // The dispatcher's last run; null before its first.
+  last: {
+    // When the dispatcher's last run ended.
+    at: string
+    requested: {
+      item: string //format: uuid
+      shortId: string
+      request: string //format: uuid
+      // The name of the agent the request starts.
+      worker: string
+      state: enum[waiting, started, withdrawn]
+      // While `waiting`, why, in worker-service's words.
+      why: string | null
+    }[]
+    why: string[]
+  }
+}
+```
+
+- 400 The request failed validation, or breaks the item graph.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 401 Missing or incorrect bearer token.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+***
+
+### [PATCH]/queue
+
+- Summary  
+  Set the running limit: the person's write alone
+
+- Operation id  
+  updateQueue
+
+- Description  
+  Raising it starts more on the dispatcher's next run, within 5 minutes. Lowering it stops nothing running: nothing new starts until fewer than it are.
+
+- Tags  
+  queue
+
+- Security  
+  bearerAuth
+
+#### Headers
+
+```typescript
+// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
+// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
+claimed-by?: string //minLength: 1 //maxLength: 200
+```
+
+#### RequestBody
+
+The new limit.
+
+- application/json
+
+```typescript
+{
+  // From 1 to 10.
+  limit: integer //minimum: 1 //maximum: 10
+}
+```
+
+#### Responses
+
+- 200 The queue, at its new limit.
+
+`application/json`
+
+```typescript
+{
+  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
+  limit: integer //minimum: 1 //maximum: 10
+  running: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // The agent the queue's request started.
+    agent: {
+      // The agent's id in worker-service, which is its request's.
+      id: string //format: uuid
+      name: string
+      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
+      state: enum[idle, working, waiting, interrupted, retired, unknown]
+    }
+    // When the queue requested it: its assignment's `at`.
+    startedAt: string
+  }[]
+  queued: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
+    position: integer | null
+    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
+    state: enum[next, blocked, requested]
+    blockedBy: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }[]
+    // While `requested`, once the request is recorded; null otherwise.
+    request: {
+      id: string //format: uuid
+      // The name its agent will have.
+      name: string
+      // Why it has not started, in worker-service's words.
+      why: string
+    }
+  }[]
+  // The dispatcher's last run; null before its first.
+  last: {
+    // When the dispatcher's last run ended.
+    at: string
+    requested: {
+      item: string //format: uuid
+      shortId: string
+      request: string //format: uuid
+      // The name of the agent the request starts.
+      worker: string
+      state: enum[waiting, started, withdrawn]
+      // While `waiting`, why, in worker-service's words.
+      why: string | null
+    }[]
+    why: string[]
+  }
+}
+```
+
+- 400 The request failed validation, or breaks the item graph.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 401 Missing or incorrect bearer token.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+- 403 Sent with a `claimed-by`: only the person sets the running limit.
+
+`application/json`
+
+```typescript
+{
+  error: string
+}
+```
+
+***
+
 ### [GET]/tags
 
 - Summary  
@@ -1849,6 +2282,33 @@ id: string //format: uuid
 - Type: http
 - Scheme: bearer
 
+### #/components/schemas/Skill
+
+```typescript
+{
+  // The skill's name, which its files are under.
+  key: string
+  // The deployed tree's commit count, 0 when deployed from outside git.
+  version: integer
+  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
+  commit: string
+  files: {
+    // Under the worker's Claude Code folder: `skills/work-tracker/bin/…` or `skills/work-tracker/reference/…`.
+    path: string
+    content: string
+    executable: boolean
+  }[]
+}
+```
+
+### #/components/schemas/Error
+
+```typescript
+{
+  error: string
+}
+```
+
 ### #/components/schemas/WorkItemView
 
 ```typescript
@@ -1958,14 +2418,6 @@ id: string //format: uuid
       why: string
     }
   }
-}
-```
-
-### #/components/schemas/Error
-
-```typescript
-{
-  error: string
 }
 ```
 
@@ -2145,6 +2597,14 @@ id: string //format: uuid
 }
 ```
 
+### #/components/schemas/Assigned
+
+```typescript
+#/components/schemas/Error & {
+   assignment: #/components/schemas/Assignment & 
+ }
+```
+
 ### #/components/schemas/TaggedItemView
 
 ```typescript
@@ -2169,6 +2629,170 @@ id: string //format: uuid
 {
   // The criterion's text, exactly as in `acceptanceCriteria`.
   criterion: string //minLength: 1
+}
+```
+
+### #/components/schemas/Queue
+
+```typescript
+{
+  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
+  limit: integer //minimum: 1 //maximum: 10
+  running: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // The agent the queue's request started.
+    agent: {
+      // The agent's id in worker-service, which is its request's.
+      id: string //format: uuid
+      name: string
+      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
+      state: enum[idle, working, waiting, interrupted, retired, unknown]
+    }
+    // When the queue requested it: its assignment's `at`.
+    startedAt: string
+  }[]
+  queued: {
+    item: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }
+    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
+    position: integer | null
+    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
+    state: enum[next, blocked, requested]
+    blockedBy: {
+      id: string //format: uuid
+      shortId: string
+      title: string
+      status: enum[backlog, ready, in_progress, review, done]
+    }[]
+    // While `requested`, once the request is recorded; null otherwise.
+    request: {
+      id: string //format: uuid
+      // The name its agent will have.
+      name: string
+      // Why it has not started, in worker-service's words.
+      why: string
+    }
+  }[]
+  // The dispatcher's last run; null before its first.
+  last: {
+    // When the dispatcher's last run ended.
+    at: string
+    requested: {
+      item: string //format: uuid
+      shortId: string
+      request: string //format: uuid
+      // The name of the agent the request starts.
+      worker: string
+      state: enum[waiting, started, withdrawn]
+      // While `waiting`, why, in worker-service's words.
+      why: string | null
+    }[]
+    why: string[]
+  }
+}
+```
+
+### #/components/schemas/QueueRunning
+
+```typescript
+{
+  item: {
+    id: string //format: uuid
+    shortId: string
+    title: string
+    status: enum[backlog, ready, in_progress, review, done]
+  }
+  // The agent the queue's request started.
+  agent: {
+    // The agent's id in worker-service, which is its request's.
+    id: string //format: uuid
+    name: string
+    // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
+    state: enum[idle, working, waiting, interrupted, retired, unknown]
+  }
+  // When the queue requested it: its assignment's `at`.
+  startedAt: string
+}
+```
+
+### #/components/schemas/QueueItem
+
+```typescript
+{
+  id: string //format: uuid
+  shortId: string
+  title: string
+  status: enum[backlog, ready, in_progress, review, done]
+}
+```
+
+### #/components/schemas/Queued
+
+```typescript
+{
+  item: {
+    id: string //format: uuid
+    shortId: string
+    title: string
+    status: enum[backlog, ready, in_progress, review, done]
+  }
+  // Its `queuePosition`; null once `requested`, when it has left the queue's order.
+  position: integer | null
+  // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
+  state: enum[next, blocked, requested]
+  blockedBy: {
+    id: string //format: uuid
+    shortId: string
+    title: string
+    status: enum[backlog, ready, in_progress, review, done]
+  }[]
+  // While `requested`, once the request is recorded; null otherwise.
+  request: {
+    id: string //format: uuid
+    // The name its agent will have.
+    name: string
+    // Why it has not started, in worker-service's words.
+    why: string
+  }
+}
+```
+
+### #/components/schemas/LastRun
+
+```typescript
+// The dispatcher's last run; null before its first.
+{
+  // When the dispatcher's last run ended.
+  at: string
+  requested: {
+    item: string //format: uuid
+    shortId: string
+    request: string //format: uuid
+    // The name of the agent the request starts.
+    worker: string
+    state: enum[waiting, started, withdrawn]
+    // While `waiting`, why, in worker-service's words.
+    why: string | null
+  }[]
+  why: string[]
+}
+```
+
+### #/components/schemas/QueuePatch
+
+```typescript
+{
+  // From 1 to 10.
+  limit: integer //minimum: 1 //maximum: 10
 }
 ```
 

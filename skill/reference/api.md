@@ -164,6 +164,24 @@ Body: `WorkLogDraft`. What was done.
 - 404: No item with that id. → `Error`
 - 409: An id was given as a prefix that more than one item's id starts with. → `Conflict`
 
+## POST /items/{id}/assignment
+
+Start an agent on an item.
+
+The one way to start work on an item. In one write it records a new `assignment`, refused with 409 while the item's current one names an agent still live: not retired, and not stopped after saying `done`. On an item whose status is its own that write also moves it to `in_progress` held by the assignment's `name`, so it is refused with 409 as a move is while `blockedBy` is not empty; a parent not yet reading started is refused the same, as its Start. The item and everything beneath it leave the queue. Then worker-service makes the agent, named `name`, briefed with the item, labelled `ticket: <title>`, given the `tickets` document and stopped once it says `done`; its id is written to `assignment.agent`. A name already taken is the same agent made by an earlier try, and is taken as made. If worker-service makes none, the item is put back as it was and the refusal is answered with 502 in worker-service's words. A closed item is refused with 400.
+
+| Parameter | In | Type | |
+| --- | --- | --- | --- |
+| `id` | path | string | The item's id, or a prefix of it at least 8 characters long, such as its `shortId`. |
+
+- 201: The item, its `assignment` naming the agent made. → `WorkItemView`
+- 400: The request failed validation, or breaks the item graph. → `Error`
+- 401: Missing or incorrect bearer token. → `Error`
+- 404: No item with that id. → `Error`
+- 409: An agent still holds the item, named in `assignment`, or is still being made; a dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with. → `Assigned` or `Blocked` or `Conflict`
+- 502: worker-service made no agent, in its words; the item is as it was. → `Error`
+- 503: No address or token for worker-service is configured. → `Error`
+
 ## POST /items/{id}/tags
 
 Add a tag to an item.
@@ -235,6 +253,29 @@ Body: `Criterion`. The criterion to untick.
 - 404: No item with that id. → `Error`
 - 409: Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with. → `Conflict`
 
+## GET /queue
+
+The queue: its running limit, what runs, what waits and why, and the dispatcher's last run.
+
+The dispatcher runs every 5 minutes: while fewer than `limit` running places are taken, it requests an implementer for each `next` item in order. A queued epic is requested once, at the epic level, and what is queued beneath it leaves the queue. A blocked item keeps its place. An agent's state is read from worker-service on each call.
+
+- 200: The queue. → `Queue`
+- 400: The request failed validation, or breaks the item graph. → `Error`
+- 401: Missing or incorrect bearer token. → `Error`
+
+## PATCH /queue
+
+Set the running limit: the person's write alone.
+
+Raising it starts more on the dispatcher's next run, within 5 minutes. Lowering it stops nothing running: nothing new starts until fewer than it are.
+
+Body: `QueuePatch`. The new limit.
+
+- 200: The queue, at its new limit. → `Queue`
+- 400: The request failed validation, or breaks the item graph. → `Error`
+- 401: Missing or incorrect bearer token. → `Error`
+- 403: Sent with a `claimed-by`: only the person sets the running limit. → `Error`
+
 ## GET /tags
 
 List tags.
@@ -300,6 +341,12 @@ Refused with 409 while any item, open or closed, carries it: take it off them fi
 
 # Schemas
 
+## Error
+
+| Field | Type | |
+| --- | --- | --- |
+| `error` | string |  |
+
 ## WorkItemView
 
 Every field of `WorkItem`, and:
@@ -356,12 +403,6 @@ The agent last started on the item, by `POST /items/{id}/assignment`, kept after
 | `queuedAt` | string or null | When the item was queued to start on its own, by a write's `queued`; null when it is not queued. Cleared in the same write that closes the item, moves its stored `status` to `in_progress`, `review` or `done`. Queuing it again keeps the time. |
 | `tags` | string (uuid)[] (at most 20) | The ids of the tags the item carries, at most 20, oldest added first: see `/tags`. Added and removed one at a time by `POST /items/{id}/tags` and `DELETE /items/{id}/tags/{tag}`, never by `POST /items` or `PATCH`, so two writers tagging one item never overwrite each other. Each is added to or removed from every item beneath, too. An item made under a parent, or moved under one with everything beneath it, takes on the parent's tags besides its own, each change in its history; moving away takes none off. A move giving any item a 21st is refused with 400 naming it. |
 | `assignment` | `Assignment` |  |
-
-## Error
-
-| Field | Type | |
-| --- | --- | --- |
-| `error` | string |  |
 
 ## Conflict
 
@@ -480,6 +521,14 @@ Every field of `Comment`, and:
 | `body` | string (min 1, max 20000) | What was done, in Markdown. |
 | `links`? | string (uri) (max 2000)[] (at most 20) |  |
 
+## Assigned
+
+Every field of `Error`, and:
+
+| Field | Type | |
+| --- | --- | --- |
+| `assignment` | `Assignment` and any |  |
+
 ## TaggedItemView
 
 Every field of `WorkItemView`, and:
@@ -499,6 +548,58 @@ Every field of `WorkItemView`, and:
 | Field | Type | |
 | --- | --- | --- |
 | `criterion` | string (min 1) | The criterion's text, exactly as in `acceptanceCriteria`. |
+
+## Queue
+
+| Field | Type | |
+| --- | --- | --- |
+| `limit` | integer (≥ 1, ≤ 10) | How many queued items the dispatcher keeps running at once; 1 until the person sets it. |
+| `running` | `QueueRunning`[] | Each item the queue started whose agent has started, oldest first. An item holds a running place, here or as `requested`, until it reads `review` or `done` (an epic by its derived status), is closed, or its agent is retired; an agent waiting on a question keeps it. |
+| `queued` | `Queued`[] | The requests still waiting to be admitted, oldest first, then every item still queued, in order. |
+| `last` | `LastRun` |  |
+
+## QueueRunning
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `QueueItem` |  |
+| `agent` | {id: string (uuid), name: string, state: `idle`, `working`, `waiting`, `interrupted`, `retired`, `unknown`} | The agent the queue's request started. |
+| `startedAt` | string | When the queue requested it: its assignment's `at`. |
+
+## QueueItem
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | string (uuid) |  |
+| `shortId` | string |  |
+| `title` | string |  |
+| `status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  |
+
+## Queued
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `QueueItem` |  |
+| `position` | integer or null | Its `queuePosition`; null once `requested`, when it has left the queue's order. |
+| `state` | `next`, `blocked`, `requested` | `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place. |
+| `blockedBy` | `QueueItem`[] | While `blocked`: each item it waits on, its own dependency or one above or below it. |
+| `request` | {id: string (uuid), name: string, why: string} or null | While `requested`, once the request is recorded; null otherwise. |
+
+## LastRun
+
+The dispatcher's last run; null before its first.
+
+| Field | Type | |
+| --- | --- | --- |
+| `at` | string | When the dispatcher's last run ended. |
+| `requested` | {item: string (uuid), shortId: string, request: string (uuid), worker: string, state: `waiting`, `started`, `withdrawn`, why: string or null}[] | The requests it made, in queue order. |
+| `why` | string[] | Why it requested nothing more: what held each place, or what stopped it. |
+
+## QueuePatch
+
+| Field | Type | |
+| --- | --- | --- |
+| `limit` | integer (≥ 1, ≤ 10) | From 1 to 10. |
 
 ## Tag
 

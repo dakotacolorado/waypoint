@@ -77,6 +77,7 @@ describe("auth", () => {
     const epic = (await (await as(admin, "POST", "/items", { type: "epic", title: "E" })).json()) as WorkItemView;
     await as(admin, "POST", "/items", { type: "story", title: "S", parent: epic.id });
     expect((await as(worker, "PATCH", "/items/" + epic.id, { state: "closed", closedReason: "completed" })).status).toBe(403);
+    expect((await as(worker, "PATCH", "/queue", { limit: 2 })).status).toBe(403);
     const signedOff = await as(admin, "PATCH", "/items/" + epic.id, { state: "closed", closedReason: "completed" });
     expect(signedOff.status).toBe(200);
     const { entries } = (await (await as(worker, "GET", `/items/${epic.id}/history`)).json()) as { entries: HistoryEntry[] };

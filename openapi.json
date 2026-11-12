@@ -13,6 +13,9 @@
       "name": "tags"
     },
     {
+      "name": "queue"
+    },
+    {
       "name": "meta"
     }
   ],
@@ -24,6 +27,63 @@
       }
     },
     "schemas": {
+      "Skill": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The skill's name, which its files are under."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The deployed tree's commit count, 0 when deployed from outside git."
+          },
+          "commit": {
+            "type": "string",
+            "description": "The deployed commit, ending `-dirty` when deployed with uncommitted changes."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Under the worker's Claude Code folder: `skills/work-tracker/bin/…` or `skills/work-tracker/reference/…`."
+                },
+                "content": {
+                  "type": "string"
+                },
+                "executable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "content",
+                "executable"
+              ]
+            }
+          }
+        },
+        "required": [
+          "key",
+          "version",
+          "commit",
+          "files"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "WorkItemView": {
         "allOf": [
           {
@@ -302,17 +362,6 @@
           "queuedAt",
           "tags",
           "assignment"
-        ]
-      },
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "error"
         ]
       },
       "Conflict": {
@@ -806,6 +855,31 @@
           "body"
         ]
       },
+      "Assigned": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "assignment": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Assignment"
+                  },
+                  {
+                    "description": "The item's assignment, whose agent still holds it: open its chat rather than start another."
+                  }
+                ]
+              }
+            },
+            "required": [
+              "assignment"
+            ]
+          }
+        ]
+      },
       "TaggedItemView": {
         "allOf": [
           {
@@ -853,6 +927,264 @@
         "required": [
           "criterion"
         ]
+      },
+      "Queue": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "How many queued items the dispatcher keeps running at once; 1 until the person sets it."
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueRunning"
+            },
+            "description": "Each item the queue started whose agent has started, oldest first. An item holds a running place, here or as `requested`, until it reads `review` or `done` (an epic by its derived status), is closed, or its agent is retired; an agent waiting on a question keeps it."
+          },
+          "queued": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Queued"
+            },
+            "description": "The requests still waiting to be admitted, oldest first, then every item still queued, in order."
+          },
+          "last": {
+            "$ref": "#/components/schemas/LastRun"
+          }
+        },
+        "required": [
+          "limit",
+          "running",
+          "queued",
+          "last"
+        ]
+      },
+      "QueueRunning": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/QueueItem"
+          },
+          "agent": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "The agent's id in worker-service, which is its request's."
+              },
+              "name": {
+                "type": "string",
+                "example": "implementer-1c9e4a07"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "idle",
+                  "working",
+                  "waiting",
+                  "interrupted",
+                  "retired",
+                  "unknown"
+                ],
+                "description": "As worker-service last said; `unknown` when it could not be asked, which still holds the place."
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "state"
+            ],
+            "description": "The agent the queue's request started."
+          },
+          "startedAt": {
+            "type": "string",
+            "description": "When the queue requested it: its assignment's `at`."
+          }
+        },
+        "required": [
+          "item",
+          "agent",
+          "startedAt"
+        ]
+      },
+      "QueueItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shortId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ],
+            "example": "ready"
+          }
+        },
+        "required": [
+          "id",
+          "shortId",
+          "title",
+          "status"
+        ]
+      },
+      "Queued": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/QueueItem"
+          },
+          "position": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Its `queuePosition`; null once `requested`, when it has left the queue's order."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "next",
+              "blocked",
+              "requested"
+            ],
+            "description": "`next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place."
+          },
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            },
+            "description": "While `blocked`: each item it waits on, its own dependency or one above or below it."
+          },
+          "request": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string",
+                "description": "The name its agent will have."
+              },
+              "why": {
+                "type": "string",
+                "description": "Why it has not started, in worker-service's words."
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "why"
+            ],
+            "description": "While `requested`, once the request is recorded; null otherwise."
+          }
+        },
+        "required": [
+          "item",
+          "position",
+          "state",
+          "blockedBy",
+          "request"
+        ]
+      },
+      "LastRun": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "When the dispatcher's last run ended."
+          },
+          "requested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "shortId": {
+                  "type": "string"
+                },
+                "request": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "worker": {
+                  "type": "string",
+                  "description": "The name of the agent the request starts."
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "waiting",
+                    "started",
+                    "withdrawn"
+                  ]
+                },
+                "why": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "While `waiting`, why, in worker-service's words."
+                }
+              },
+              "required": [
+                "item",
+                "shortId",
+                "request",
+                "worker",
+                "state",
+                "why"
+              ]
+            },
+            "description": "The requests it made, in queue order."
+          },
+          "why": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why it requested nothing more: what held each place, or what stopped it."
+          }
+        },
+        "required": [
+          "at",
+          "requested",
+          "why"
+        ],
+        "description": "The dispatcher's last run; null before its first."
+      },
+      "QueuePatch": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "From 1 to 10."
+          }
+        },
+        "required": [
+          "limit"
+        ],
+        "additionalProperties": false
       },
       "Tag": {
         "type": "object",
@@ -1005,6 +1337,43 @@
                     "version",
                     "commit"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/skill": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getSkill",
+        "summary": "Read the client workers call this deployment with",
+        "description": "The work-tracker skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed. Its `SKILL.md` is not here: guidance stays in document-service's `global`.",
+        "responses": {
+          "200": {
+            "description": "The skill's files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -1992,6 +2361,127 @@
         }
       }
     },
+    "/items/{id}/assignment": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "items"
+        ],
+        "operationId": "assignItem",
+        "summary": "Start an agent on an item",
+        "description": "The one way to start work on an item. In one write it records a new `assignment`, refused with 409 while the item's current one names an agent still live: not retired, and not stopped after saying `done`. On an item whose status is its own that write also moves it to `in_progress` held by the assignment's `name`, so it is refused with 409 as a move is while `blockedBy` is not empty; a parent not yet reading started is refused the same, as its Start. The item and everything beneath it leave the queue. Then worker-service makes the agent, named `name`, briefed with the item, labelled `ticket: <title>`, given the `tickets` document and stopped once it says `done`; its id is written to `assignment.agent`. A name already taken is the same agent made by an earlier try, and is taken as made. If worker-service makes none, the item is put back as it was and the refusal is answered with 502 in worker-service's words. A closed item is refused with 400.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            },
+            "required": true,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The item, its `assignment` naming the agent made.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An agent still holds the item, named in `assignment`, or is still being made; a dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Assigned"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Blocked"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "worker-service made no agent, in its words; the item is as it was.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No address or token for worker-service is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items/{id}/tags": {
       "post": {
         "security": [
@@ -2390,6 +2880,132 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Conflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "queue"
+        ],
+        "operationId": "getQueue",
+        "summary": "The queue: its running limit, what runs, what waits and why, and the dispatcher's last run",
+        "description": "The dispatcher runs every 5 minutes: while fewer than `limit` running places are taken, it requests an implementer for each `next` item in order. A queued epic is requested once, at the epic level, and what is queued beneath it leaves the queue. A blocked item keeps its place. An agent's state is read from worker-service on each call.",
+        "responses": {
+          "200": {
+            "description": "The queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Queue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "queue"
+        ],
+        "operationId": "updateQueue",
+        "summary": "Set the running limit: the person's write alone",
+        "description": "Raising it starts more on the dispatcher's next run, within 5 minutes. Lowering it stops nothing running: nothing new starts until fewer than it are.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit."
+            },
+            "required": false,
+            "description": "Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The new limit.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueuePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The queue, at its new limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Queue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation, or breaks the item graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sent with a `claimed-by`: only the person sets the running limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
