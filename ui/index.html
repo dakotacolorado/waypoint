@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>waypoint</title>
+<script>
+  // Served under a path prefix (as /waypoint/), every link here is relative: it needs the trailing slash.
+  // The assets are added only once it has one, so none is fetched from the wrong path first.
+  if (!location.pathname.endsWith("/")) location.replace(location.pathname + "/" + location.search + location.hash);
+  else {
+    const style = Object.assign(document.createElement("link"), { rel: "stylesheet", href: "./ui/style.css" });
+    const app = Object.assign(document.createElement("script"), { type: "module", src: "./ui/app.js" });
+    document.head.append(style, app);
+  }
+</script>
+</head>
+<body>
+<header>
+  <a class="brand" href="#/">📍 waypoint</a>
+  <nav>
+    <a href="#/">Board</a>
+    <a href="#/new">New item</a>
+    <a href="./docs/api" target="_blank">API</a>
+    <a href="./docs/mcp" target="_blank">MCP</a>
+    <button id="signout" hidden>Sign out</button>
+  </nav>
+</header>
+<main id="main"></main>
+</body>
+</html>

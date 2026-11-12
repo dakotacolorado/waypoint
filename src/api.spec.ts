@@ -938,7 +938,7 @@ describe("history", () => {
     const [, updated] = await history(id);
     expect(updated!.changes).toEqual([
       { field: "title", from: "x", to: "y" },
-      { field: "acceptanceCriteria", from: ["a"], to: ["a", "b"] },
+      { field: "acceptanceCriteria", from: [{ id: "c1", text: "a" }], to: [{ id: "c1", text: "a" }, { id: "c2", text: "b" }] },
       { field: "state", from: "open", to: "closed" },
       { field: "closedReason", from: null, to: "not_planned" },
     ]);
@@ -1039,26 +1039,55 @@ describe("ticking acceptance criteria", () => {
 
     expect((await patch(item.id, { met: ["tested"] }, "agent-1")).status).toBe(200);
     const once = await read(item.id);
-    expect(once.met).toEqual([{ criterion: "tested", by: "agent-1", at: expect.any(String) }]);
+    expect(once.met).toEqual([{ criterion: "c2", by: "agent-1", at: expect.any(String) }]);
 
-    await patch(item.id, { met: ["shipped", "tested"] }, "agent-2");
+    await patch(item.id, { met: ["shipped", "c2"] }, "agent-2");
     const twice = await read(item.id);
     // In the criteria's order, the first tick still its first ticker's.
     expect(twice.met.map((tick) => [tick.criterion, tick.by])).toEqual([
-      ["tested", "agent-1"],
-      ["shipped", "agent-2"],
+      ["c2", "agent-1"],
+      ["c3", "agent-2"],
     ]);
     expect(twice.met[0]!.at).toBe(once.met[0]!.at);
 
     await patch(item.id, { met: ["shipped"] });
-    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["shipped"]);
+    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["c3"]);
+  });
+
+  it("gives each criterion its own id, so two that read the same are ticked apart", async () => {
+    const item = await create({ title: "twins", acceptanceCriteria: ["same", "same", "same"] });
+    expect(item.acceptanceCriteria).toEqual([
+      { id: "c1", text: "same" },
+      { id: "c2", text: "same" },
+      { id: "c3", text: "same" },
+    ]);
+    expect((await patch(item.id, { met: ["c2"] })).status).toBe(200);
+    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["c2"]);
+    const ambiguous = await patch(item.id, { met: ["same"] });
+    expect(ambiguous.status).toBe(400);
+    expect(((await ambiguous.json()) as { error: string }).error).toContain("c1, c2, c3");
+  });
+
+  it("keeps a criterion's id and tick through an edit naming its id, and never reuses an id in the same write", async () => {
+    const item = await create({ title: "edited", acceptanceCriteria: ["builds", "tested", "shipped"] });
+    await patch(item.id, { met: ["c1", "c3"] });
+    await patch(item.id, { acceptanceCriteria: [{ id: "c1", text: "builds cleanly" }, "shipped", "documented"] });
+    const after = await read(item.id);
+    expect(after.acceptanceCriteria).toEqual([
+      { id: "c1", text: "builds cleanly" },
+      { id: "c3", text: "shipped" },
+      { id: "c4", text: "documented" },
+    ]);
+    expect(after.met.map((tick) => tick.criterion)).toEqual(["c1", "c3"]);
+    const unknown = await patch(item.id, { acceptanceCriteria: [{ id: "c9", text: "x" }] });
+    expect(unknown.status).toBe(400);
   });
 
   it("clears a tick when its criterion's text changes or the criterion goes, keeping the rest", async () => {
     const item = await create({ title: "edited", acceptanceCriteria: ["builds", "tested"] });
     await patch(item.id, { met: ["builds", "tested"] }, "agent-1");
     await patch(item.id, { acceptanceCriteria: ["builds cleanly", "tested"] });
-    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["tested"]);
+    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["c2"]);
     await patch(item.id, { acceptanceCriteria: ["builds cleanly"] });
     expect((await read(item.id)).met).toEqual([]);
   });
@@ -1066,7 +1095,7 @@ describe("ticking acceptance criteria", () => {
   it("takes new criteria and their ticks in one write", async () => {
     const item = await create({ title: "together" });
     await patch(item.id, { acceptanceCriteria: ["a", "b"], met: ["b"] });
-    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["b"]);
+    expect((await read(item.id)).met.map((tick) => tick.criterion)).toEqual(["c2"]);
   });
 
   it("refuses a tick on a criterion the item does not have", async () => {
@@ -1084,8 +1113,8 @@ describe("ticking acceptance criteria", () => {
     await patch(item.id, { acceptanceCriteria: ["a", "b"] });
     const { entries } = (await (await call(`/items/${item.id}/history`, { headers })).json()) as { entries: HistoryEntry[] };
     expect(entries.slice(1).map((entry) => entry.changes)).toEqual([
-      [{ field: "met", from: [], to: ["a"] }],
-      [{ field: "met", from: ["a"], to: [] }],
+      [{ field: "met", from: [], to: ["c1"] }],
+      [{ field: "met", from: ["c1"], to: [] }],
       [],
     ]);
   });
@@ -1105,8 +1134,8 @@ describe("ticking one criterion at a time", () => {
     const item = await create({ title: "checked", acceptanceCriteria: ["builds", "tested"] });
     const res = await tick(item.id.slice(0, 8), "tested", "agent-1");
     expect(res.status).toBe(200);
-    expect(((await res.json()) as WorkItemView).met).toEqual([{ criterion: "tested", by: "agent-1", at: expect.any(String) }]);
-    expect((await read(item.id)).met).toEqual([{ criterion: "tested", by: "agent-1", at: expect.any(String) }]);
+    expect(((await res.json()) as WorkItemView).met).toEqual([{ criterion: "c2", by: "agent-1", at: expect.any(String) }]);
+    expect((await read(item.id)).met).toEqual([{ criterion: "c2", by: "agent-1", at: expect.any(String) }]);
   });
 
   it("keeps the other ticks, and their tickers, when ticking or unticking one", async () => {
@@ -1114,11 +1143,11 @@ describe("ticking one criterion at a time", () => {
     await tick(item.id, "c", "agent-1");
     await tick(item.id, "a", "agent-2");
     expect((await read(item.id)).met.map((t) => [t.criterion, t.by])).toEqual([
-      ["a", "agent-2"],
-      ["c", "agent-1"],
+      ["c1", "agent-2"],
+      ["c3", "agent-1"],
     ]);
     expect((await untick(item.id, "a", "agent-3")).status).toBe(200);
-    expect((await read(item.id)).met.map((t) => [t.criterion, t.by])).toEqual([["c", "agent-1"]]);
+    expect((await read(item.id)).met.map((t) => [t.criterion, t.by])).toEqual([["c3", "agent-1"]]);
   });
 
   it("changes nothing and records nothing for a tick already met or an untick not met", async () => {
@@ -1146,6 +1175,15 @@ describe("ticking one criterion at a time", () => {
     expect((await tick("00000000-0000-4000-8000-000000000000", "a")).status).toBe(404);
   });
 
+  it("ticks one of three criteria that read the same by its id, leaving the other two, and refuses the text with their ids", async () => {
+    const item = await create({ title: "twins", acceptanceCriteria: ["same", "same", "same"] });
+    expect((await tick(item.id, "c3", "agent-1")).status).toBe(200);
+    expect((await read(item.id)).met.map((t) => t.criterion)).toEqual(["c3"]);
+    const res = await tick(item.id, "same");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("c1, c2, c3");
+  });
+
   it("records each tick and untick in the history as a met change, with its claimed-by", async () => {
     const item = await create({ title: "recorded", acceptanceCriteria: ["a", "b"] });
     await tick(item.id, "b", "agent-1");
@@ -1153,9 +1191,9 @@ describe("ticking one criterion at a time", () => {
     await untick(item.id, "b", "agent-2");
     const entries = (await history(item.id)).slice(1);
     expect(entries.map((entry) => entry.changes)).toEqual([
-      [{ field: "met", from: [], to: ["b"] }],
-      [{ field: "met", from: ["b"], to: ["a", "b"] }],
-      [{ field: "met", from: ["a", "b"], to: ["a"] }],
+      [{ field: "met", from: [], to: ["c2"] }],
+      [{ field: "met", from: ["c2"], to: ["c1", "c2"] }],
+      [{ field: "met", from: ["c1", "c2"], to: ["c1"] }],
     ]);
     expect(entries.map((entry) => entry.claimedBy)).toEqual(["agent-1", "agent-1", "agent-2"]);
   });
@@ -1169,8 +1207,8 @@ describe("ticking one criterion at a time", () => {
     release();
     expect((await slow).status).toBe(200);
     expect((await read(item.id)).met.map((t) => [t.criterion, t.by])).toEqual([
-      ["a", "agent-1"],
-      ["b", "agent-2"],
+      ["c1", "agent-1"],
+      ["c2", "agent-2"],
     ]);
   });
 });
@@ -1812,5 +1850,22 @@ describe("short ids", () => {
     const graph = new Graph([epic("abcdef01-0000-4000-8000-000000000001")]);
     const draws = ["abcdef01-9999-4000-8000-000000000002", "abcdef02-0000-4000-8000-000000000003"];
     expect(graph.freshId(() => draws.shift()!)).toBe("abcdef02-0000-4000-8000-000000000003");
+  });
+});
+
+describe("pages", () => {
+  it.each([
+    ["/", "text/html", "<title>waypoint</title>"],
+    ["/ui/app.js", "text/javascript", "function board"],
+    ["/ui/style.css", "text/css", ".board"],
+    ["/ui/banner.js", "text/javascript", "export const PIN_SVG"],
+    ["/docs/api", "text/html", "createItem"],
+    ["/docs/mcp", "text/html", "create_item"],
+    ["/mcp.json", "application/json", "\"tools\""],
+  ])("serves %s without a token", async (path, type, says) => {
+    const res = await call(path);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(type);
+    expect(await res.text()).toContain(says);
   });
 });

@@ -14,6 +14,7 @@ import {
   ended,
   type Assignment,
   type ClosedReason,
+  type Criterion,
   type Draft,
   type Filed,
   type HistoryEntry,
@@ -64,6 +65,24 @@ export interface Snapshot {
   graph: Graph;
   tags: Tag[];
   version: number;
+}
+
+/**
+ * Criteria, and their ticks, as a record holds them. One written before
+ * criteria had ids is a list of texts, ticked by text: each gets the id of its
+ * place, `c1` on, and each tick goes to the first criterion reading its text
+ * that has none yet.
+ */
+function criteriaFromRecord(stored: unknown, ticks: unknown): { acceptanceCriteria: Criterion[]; met: Tick[] } {
+  const given = (stored as (string | Criterion)[] | undefined) ?? [];
+  const acceptanceCriteria = given.map((each, at) => (typeof each === "string" ? { id: `c${at + 1}`, text: each } : each));
+  const met: Tick[] = [];
+  for (const tick of (ticks as Tick[] | undefined) ?? []) {
+    const by = acceptanceCriteria.find((each) => each.id === tick.criterion) ??
+      acceptanceCriteria.find((each) => each.text === tick.criterion && !met.some((held) => held.criterion === each.id));
+    if (by && !met.some((held) => held.criterion === by.id)) met.push({ ...tick, criterion: by.id });
+  }
+  return { acceptanceCriteria, met };
 }
 
 /**
@@ -615,8 +634,7 @@ export class WorkItemStore {
       type: (record.type as Type) ?? "task",
       title: record.title as string,
       body: (record.body as string) ?? "",
-      acceptanceCriteria: (record.acceptanceCriteria as string[]) ?? [],
-      met: (record.met as Tick[]) ?? [],
+      ...criteriaFromRecord(record.acceptanceCriteria, record.met),
       status,
       state,
       closedReason: (record.closedReason as ClosedReason | null) ?? null,

@@ -60,6 +60,7 @@ export function start(config: Config): Running {
     skill,
     assigner,
     fleet: fleet && (() => fleet),
+    publicUrl: config.uiUrl,
   });
   let timer: NodeJS.Timeout | undefined;
   if (fleet) {

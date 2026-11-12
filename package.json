@@ -2,16 +2,39 @@
   "name": "@dakotajp/waypoint",
   "version": "0.1.0",
   "description": "A task tracker for people and agents: epics, stories and tasks with dependencies and derived status, over an HTTP API on SQLite.",
-  "keywords": ["task-tracker", "agents", "claude-code", "sqlite", "epics", "backlog"],
+  "keywords": [
+    "task-tracker",
+    "agents",
+    "claude-code",
+    "sqlite",
+    "epics",
+    "backlog"
+  ],
   "homepage": "https://github.com/dakotacolorado/waypoint",
-  "bugs": { "url": "https://github.com/dakotacolorado/waypoint/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/dakotacolorado/waypoint.git" },
+  "bugs": {
+    "url": "https://github.com/dakotacolorado/waypoint/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakotacolorado/waypoint.git"
+  },
   "license": "MIT",
   "author": "Dakota Parker",
   "type": "module",
-  "bin": { "waypoint": "dist/cli.js" },
-  "files": ["dist", "skill", "openapi.json"],
-  "engines": { "node": ">=24" },
+  "bin": {
+    "waypoint": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "ui",
+    "docs",
+    "openapi.json",
+    "mcp.json"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "node src/cli.ts --db .waypoint-dev.db",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && node src/stamp.ts dist/build.json",
@@ -24,6 +47,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@hono/zod-openapi": "^1.6.3",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "hono": "^4.6.0",
     "zod": "^4.6.7"
   },
@@ -34,5 +58,7 @@
     "typescript": "^5.7.2",
     "vitest": "^5.0.5"
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }

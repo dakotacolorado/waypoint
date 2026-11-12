@@ -2,7 +2,49 @@
 
 Generated from this deployment's `openapi.json`. `bin/` adds the address, the bearer token and `claimed-by`, so a path is all a call needs. A field marked `?` is optional.
 
-One entity, the work item, at exactly three levels: an epic has no parent, every story has an epic, and every task has a story. `status` values are the board columns. A parent's `status` is derived from its open children's, by the rule on `WorkItemView.status`. `state` is separate: `open` until the item is closed, as `completed` or `not_planned`, from any status. An item may depend on its siblings, items of its type with its parent, and lists in `blockedBy` each dependency, its own or an item's above or below it, not yet `done` or closed. The service refuses with 409 a move to `in_progress`, `review` or `done` while `blockedBy` is not empty, and refuses a parent of the wrong type, a dependency on a non-sibling, a cycle, or deleting an item still referenced. Every create, update and delete is recorded in the item's `history`, which no operation edits. Beside its fields an item keeps `comments`, what people and workers say about it, and a `work-log`, what was done on it; neither changes the item or its history. A story or task not yet started can be `queued` to start on its own, in the order queued, as many at once as the queue's running limit: see `WorkItemView.queuePosition` and `/queue`. Acceptance criteria are ticked and unticked one at a time at `/items/{id}/met`. Tags, at `/tags`, are a shared list of labels, each a unique value, a colour and a description; an item carries some in `tags`, added and removed one at a time at `/items/{id}/tags`, each on the item and everything beneath it.
+A task tracker for people and their agents. Every request takes a bearer token, but the liveness check.
+
+## Items
+
+One kind of record, the **item**, at three levels:
+
+- an **epic** has no parent;
+- every **story** has an epic;
+- every **task** has a story.
+
+## Status and state
+
+- `status` is the board column: `backlog`, `ready`, `in_progress`, `review`, `done`.
+- A parent's status is **derived** from its open children (the rule is on `WorkItemView.status`): move the children, not the parent.
+- `state` is separate: `open`, or `closed` as `completed` or `not_planned`, from any status.
+
+## Dependencies
+
+- An item may depend only on its **siblings**: items of its own type with the same parent.
+- `blockedBy` lists what it still waits on: its own dependencies, and those of the items above and below it, not yet done or closed.
+- A move to `in_progress`, `review` or `done` is refused with **409** while `blockedBy` is not empty.
+- Also refused: a parent of the wrong type, a dependency on a non-sibling, a cycle, and deleting an item another still names.
+
+## Beside an item
+
+- **History**: every create, update and delete, never edited. `/items/{id}/history`
+- **Comments**: what people and agents say about it. `/items/{id}/comments`
+- **Work log**: what was done on it, with links. `/items/{id}/work-log`
+- **Acceptance criteria**: each with its own id (`c1`, `c2`, …), ticked and unticked one at a time. `/items/{id}/met`
+
+None of comments, the work log or ticks changes the item's other fields.
+
+## Tags
+
+A shared list of labels at `/tags`, each a unique value, a colour and a description. One put on an item at `/items/{id}/tags` goes on everything beneath it too.
+
+## The queue
+
+A story or task not yet started can be `queued` to start on its own, in order, as many at once as the running limit. See `WorkItemView.queuePosition` and `/queue`. It starts agents only where a worker-service is configured.
+
+## Who wrote it
+
+A write is recorded under its `claimed-by` header, else its token's name. Only an admin token's write that names nobody is the person's: it alone may sign off an epic, force a move past its dependencies, or set the queue's limit.
 
 ## GET /items
 
@@ -221,7 +263,7 @@ Removes one tag from `tags` on the item and on every item beneath it, open or cl
 
 Tick one acceptance criterion as met.
 
-Adds one tick to `met`, by the criterion's text, recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.
+Adds one tick to `met`, by the criterion's id (or unique text), recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.
 
 | Parameter | In | Type | |
 | --- | --- | --- | --- |
@@ -230,7 +272,7 @@ Adds one tick to `met`, by the criterion's text, recording this write's `claimed
 Body: `Criterion`. The criterion to tick.
 
 - 200: The item, with the criterion ticked. → `WorkItemView`
-- 400: The request failed validation, or the item has no criterion with that text, named. → `Error`
+- 400: The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids. → `Error`
 - 401: Missing or incorrect bearer token. → `Error`
 - 404: No item with that id. → `Error`
 - 409: Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with. → `Conflict`
@@ -248,7 +290,7 @@ Removes that criterion's tick from `met`, leaving every other. One not ticked ch
 Body: `Criterion`. The criterion to untick.
 
 - 200: The item, without the criterion's tick. → `WorkItemView`
-- 400: The request failed validation, or the item has no criterion with that text, named. → `Error`
+- 400: The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids. → `Error`
 - 401: Missing or incorrect bearer token. → `Error`
 - 404: No item with that id. → `Error`
 - 409: Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with. → `Conflict`
@@ -360,11 +402,18 @@ Every field of `WorkItem`, and:
 | `finishedEarly` | boolean | `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`. |
 | `queuePosition` | integer (≥ 0) or null | The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started. |
 
+## AcceptanceCriterion
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | string | The criterion's id on its item: `c1`, `c2`, …, kept while it stays. |
+| `text` | string |  |
+
 ## Tick
 
 | Field | Type | |
 | --- | --- | --- |
-| `criterion` | string | The criterion's text, as it stood when ticked. |
+| `criterion` | string | The id of the criterion ticked. |
 | `by` | string or null | The `claimed-by` of the write that ticked it, unverified; null when it said nothing. |
 | `at` | string | When it was ticked. |
 
@@ -389,8 +438,8 @@ The agent last started on the item, by `POST /items/{id}/assignment`, kept after
 | `type` | `epic`, `story`, `task` |  |
 | `title` | string |  |
 | `body` | string |  |
-| `acceptanceCriteria` | string[] |  |
-| `met` | `Tick`[] | The acceptance criteria a reviewer has ticked as met, in the order of `acceptanceCriteria`. Ticked and unticked one at a time by POST and DELETE `/items/{id}/met`, or all at once by a patch's `met`; a tick goes when its criterion's text changes or the criterion is dropped, so an edited criterion is met again only once ticked again. |
+| `acceptanceCriteria` | `AcceptanceCriterion`[] | In order, each with its own id, so two criteria that read the same are still told apart. |
+| `met` | `Tick`[] | The acceptance criteria ticked as met, by id, in the order of `acceptanceCriteria`. Ticked and unticked one at a time by POST and DELETE `/items/{id}/met`, or all at once by a patch's `met`. A tick stays through an edit that keeps its criterion's id, and goes with the criterion. |
 | `status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  |
 | `state` | `open`, `closed` | Whether anyone still needs to see the item, apart from where the work got to: `status` is never changed by closing, and reaching `done` does not close. Every item is created `open`. Closing an item closes what is open beneath it; reopening writes no other item. |
 | `closedReason` | `completed`, `not_planned`, `null` | Why a closed item closed: `completed`, or `not_planned` for work abandoned at any status. Null while open. |
@@ -427,7 +476,7 @@ Every field of `Error`, and:
 | `type`? | `epic`, `story`, `task` |  |
 | `title` | string (min 1, max 200) |  |
 | `body`? | string (max 20000) |  |
-| `acceptanceCriteria`? | string (min 1)[] (at most 50) | One line per criterion. |
+| `acceptanceCriteria`? | string (min 1) or {id?: string, text: string (min 1)}[] (at most 50) | One per criterion, each a text; they are given ids `c1`, `c2`, … in order. |
 | `status`? | `backlog`, `ready`, `in_progress`, `review`, `done` | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
 | `parent`? | string or null | A story for a task, an epic for a story, null only for an epic. |
 | `dependsOn`? | string[] (at most 50) |  |
@@ -459,8 +508,8 @@ Present only on the person's sign-off of an epic (closing it `completed`) whose 
 | `type`? | `epic`, `story`, `task` |  |
 | `title`? | string (min 1, max 200) |  |
 | `body`? | string (max 20000) |  |
-| `acceptanceCriteria`? | string (min 1)[] (at most 50) |  |
-| `met`? | string[] (at most 50) | Every criterion now met, by its text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400. |
+| `acceptanceCriteria`? | string (min 1) or {id?: string, text: string (min 1)}[] (at most 50) | Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. An id the item does not have is refused with 400. |
+| `met`? | string (min 1)[] (at most 50) | Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400. |
 | `status`? | `backlog`, `ready`, `in_progress`, `review`, `done` | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
 | `state`? | `open`, `closed` | Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`. |
 | `closedReason`? | `completed`, `not_planned` | Required with, and only with, `state: closed`. |
@@ -486,9 +535,9 @@ Present only on the person's sign-off of an epic (closing it `completed`) whose 
 
 | Field | Type | |
 | --- | --- | --- |
-| `field` | `type`, `title`, `body`, `acceptanceCriteria`, `met`, `status`, `heldBy`, `reviewedBy`, `state`, `closedReason`, `parent`, `dependsOn`, `queuedAt`, `tags`, `assignment` | `met` is recorded as the texts of the criteria ticked. |
-| `from` | string or string[] or boolean or `Assignment` or any or null | Null on `created`. |
-| `to` | string or string[] or boolean or `Assignment` or any or null | Null on `deleted`. |
+| `field` | `type`, `title`, `body`, `acceptanceCriteria`, `met`, `status`, `heldBy`, `reviewedBy`, `state`, `closedReason`, `parent`, `dependsOn`, `queuedAt`, `tags`, `assignment` | `met` is recorded as the ids of the criteria ticked. |
+| `from` | string or string[] or `AcceptanceCriterion`[] or boolean or `Assignment` or any or null | Null on `created`. |
+| `to` | string or string[] or `AcceptanceCriterion`[] or boolean or `Assignment` or any or null | Null on `deleted`. |
 
 ## Comment
 
@@ -547,7 +596,7 @@ Every field of `WorkItemView`, and:
 
 | Field | Type | |
 | --- | --- | --- |
-| `criterion` | string (min 1) | The criterion's text, exactly as in `acceptanceCriteria`. |
+| `criterion` | string (min 1) | The criterion's id, or its text when no other criterion of the item reads the same. |
 
 ## Queue
 

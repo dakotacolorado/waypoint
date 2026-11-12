@@ -1,0 +1,803 @@
+{
+  "instructions": "waypoint tracks work as epics, stories and tasks. An epic has no parent, every story has an epic, every task has a story.\n\n- A parent's status is derived from its open children: move the children, never the parent.\n- Dependencies are between siblings only. An item moves to in_progress, review or done only once blockedBy is empty.\n- Close an item (update_item with state closed and a closedReason) rather than delete it.\n- Say what you did on an item with add_work_log; talk to people about it with add_comment.\n- Every tool takes an id as the full id or a prefix of at least 8 characters, such as its shortId.",
+  "tools": [
+    {
+      "name": "list_items",
+      "title": "List items",
+      "description": "Items matching every filter given, as GET /items. With no filter, every item, open and closed.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ]
+          },
+          "state": {
+            "description": "`open` for only what still needs looking at.",
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "epic",
+              "story",
+              "task"
+            ]
+          },
+          "parent": {
+            "description": "Only the children of this item.",
+            "type": "string",
+            "minLength": 8
+          },
+          "heldBy": {
+            "description": "Only items held by this name.",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Only items carrying this tag, by id or value.",
+            "type": "string"
+          },
+          "queued": {
+            "description": "true: only queued items, in queue order.",
+            "type": "boolean"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "get_item",
+      "title": "Get an item",
+      "description": "One item, with its derived status, blockedBy and children, as GET /items/{id}.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "create_item",
+      "title": "Create an item",
+      "description": "Creates an epic, story or task, as POST /items. A story needs an epic as parent, a task a story; an epic has none.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "type": {
+            "default": "task",
+            "type": "string",
+            "enum": [
+              "epic",
+              "story",
+              "task"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "body": {
+            "default": "",
+            "type": "string",
+            "maxLength": 20000
+          },
+          "acceptanceCriteria": {
+            "default": [],
+            "description": "One per criterion, each a text; they are given ids `c1`, `c2`, … in order.",
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^c[1-9][0-9]*$",
+                      "description": "The criterion's id on its item: `c1`, `c2`, …, kept while it stays."
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ]
+                }
+              ]
+            }
+          },
+          "status": {
+            "default": "backlog",
+            "type": "string",
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "review",
+              "done"
+            ],
+            "description": "Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty."
+          },
+          "parent": {
+            "default": null,
+            "description": "A story for a task, an epic for a story, null only for an epic.",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F-]{8,36}$",
+                "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dependsOn": {
+            "default": [],
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F-]{8,36}$",
+              "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+            }
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "update_item",
+      "title": "Update an item",
+      "description": "Changes the fields given in `changes`, as PATCH /items/{id}: status, title, body, criteria, parent, dependencies, queued; close it with state closed and a closedReason.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "epic",
+                  "story",
+                  "task"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "acceptanceCriteria": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^c[1-9][0-9]*$",
+                          "description": "The criterion's id on its item: `c1`, `c2`, …, kept while it stays."
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ]
+                    }
+                  ]
+                },
+                "description": "Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. An id the item does not have is refused with 400."
+              },
+              "met": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "ready",
+                  "in_progress",
+                  "review",
+                  "done"
+                ],
+                "description": "Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "closed"
+                ],
+                "description": "Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`."
+              },
+              "closedReason": {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "not_planned"
+                ],
+                "description": "Required with, and only with, `state: closed`."
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F-]{8,36}$",
+                    "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dependsOn": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F-]{8,36}$",
+                  "description": "An item's id, or a prefix of it at least 8 characters long, such as its `shortId`."
+                }
+              },
+              "reviewedBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The worker reviewing the item, as the reviewer's own name; null clears it."
+              },
+              "force": {
+                "type": "boolean",
+                "const": true,
+                "description": "Move the item to `in_progress`, `review` or `done` though its `blockedBy` is not empty, recorded as the history entry's `overrode`. The person's alone: refused with 403 from a write that sends `claimed-by`, as every worker's does. Changes nothing on its own."
+              },
+              "queued": {
+                "type": "boolean",
+                "description": "`true` queues the item to start on its own, at the back of the queue, or keeps its place if already queued; `false` takes it off. Only an open epic, story or task that reads `backlog` or `ready` can be queued, as this write leaves it: any other is refused with 400, naming why. Recorded in `history` as a change to `queuedAt`."
+              },
+              "tags": {
+                "description": "Not accepted: refused with 400 whatever its value. See `WorkItem.tags`."
+              }
+            }
+          }
+        },
+        "required": [
+          "id",
+          "changes"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "delete_item",
+      "title": "Delete an item",
+      "description": "Deletes an item no other item names, as DELETE /items/{id}. Prefer closing it.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "item_history",
+      "title": "An item's history",
+      "description": "Every write to the item and beneath it, oldest first, as GET /items/{id}/history.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_comments",
+      "title": "An item's comments",
+      "description": "What people and agents said about the item, oldest first, as GET /items/{id}/comments.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "add_comment",
+      "title": "Comment on an item",
+      "description": "Adds a comment to the item, as POST /items/{id}/comments.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Markdown."
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_work_log",
+      "title": "An item's work log",
+      "description": "What was done on the item, oldest first, as GET /items/{id}/work-log.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "add_work_log",
+      "title": "Log work on an item",
+      "description": "Records what was done on the item, with links to what it made, as POST /items/{id}/work-log.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Markdown."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "tick_criterion",
+      "title": "Tick a criterion",
+      "description": "Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "criterion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The criterion's id, as `c2`, or its text when unique."
+          }
+        },
+        "required": [
+          "id",
+          "criterion"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "untick_criterion",
+      "title": "Untick a criterion",
+      "description": "Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "criterion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The criterion's id, as `c2`, or its text when unique."
+          }
+        },
+        "required": [
+          "id",
+          "criterion"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_tags",
+      "title": "List tags",
+      "description": "Every tag: its value, colour and description, as GET /tags.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "create_tag",
+      "title": "Create a tag",
+      "description": "Adds a tag to the shared list, as POST /tags.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 500,
+            "description": "What the tag is for, shown when hovering its chip."
+          }
+        },
+        "required": [
+          "value",
+          "color"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "update_tag",
+      "title": "Update a tag",
+      "description": "Changes a tag's value, colour or description, as PATCH /tags/{id}.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The tag's id."
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "What the tag is for, shown when hovering its chip."
+              }
+            }
+          }
+        },
+        "required": [
+          "id",
+          "changes"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "tag_item",
+      "title": "Tag an item",
+      "description": "Puts a tag, by id or value, on the item and everything beneath it, as POST /items/{id}/tags.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "tag"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "untag_item",
+      "title": "Untag an item",
+      "description": "Takes a tag, by id or value, off the item and everything beneath it, as DELETE /items/{id}/tags/{tag}.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "tag"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "get_queue",
+      "title": "The queue",
+      "description": "What the queue is running, what waits in it and why, and its running limit, as GET /queue.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "start_item",
+      "title": "Start an agent on an item",
+      "description": "Asks the configured worker-service for an agent on the item, as POST /items/{id}/assignment; refused when none is configured.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "description": "The item's id, or a prefix of it at least 8 characters long, such as its shortId."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    }
+  ]
+}
