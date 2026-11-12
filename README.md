@@ -8,8 +8,10 @@ One Node process serves an HTTP API, an MCP server and a web page, and keeps
 everything in one SQLite file.
 
 ```sh
-npx @dakotajp/waypoint
+npx github:dakotacolorado/waypoint
 ```
+
+(It installs from this repo and builds itself; `npx @dakotajp/waypoint` once it is on npm.)
 
 ```
 ██╗    ██╗ █████╗ ██╗   ██╗██████╗  ██████╗ ██╗███╗   ██╗████████╗    ▄▄████▄▄
@@ -35,7 +37,15 @@ admin token (shown once, kept only as a hash): wp_…
 
 Node 24 or later; nothing else.
 
+## Quick start
+
+1. Run it, and keep the admin token it prints: it is shown once.
+2. Open http://127.0.0.1:4400/ and paste the token to sign in.
+3. Create a task with **New task**, or through the API or MCP below.
+
 ![The board](./docs/images/board.png)
+
+The page shows the board by status, which tasks are ready and which are blocked, and each task's criteria, subtasks, dependencies, comments and history.
 
 ## How it works
 
@@ -60,8 +70,11 @@ Fourteen operations, named as AWS names theirs:
 The reference is [`docs/API.md`](./docs/API.md), served at `/docs/api`; the contract is [`openapi.json`](./openapi.json).
 
 ```sh
-curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"title":"Write the README","criteria":[{"text":"Says how to run it"}]}' http://127.0.0.1:4400/tasks
+curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' http://127.0.0.1:4400/tasks -d '{
+  "title": "Write the README",
+  "criteria": [{ "text": "Says how to run it" }],
+  "subtasks": [{ "title": "Draft it" }, { "title": "Review it", "dependsOn": ["s1"] }]
+}'
 curl -s -H "authorization: Bearer $TOKEN" 'http://127.0.0.1:4400/tasks?ready=true'
 ```
 
@@ -71,6 +84,12 @@ curl -s -H "authorization: Bearer $TOKEN" 'http://127.0.0.1:4400/tasks?ready=tru
 
 ```json
 { "mcpServers": { "waypoint": { "type": "http", "url": "http://127.0.0.1:4400/mcp", "headers": { "Authorization": "Bearer wp_…" } } } }
+```
+
+With Claude Code:
+
+```sh
+claude mcp add --transport http waypoint http://127.0.0.1:4400/mcp --header "Authorization: Bearer wp_…"
 ```
 
 The tools are listed in [`docs/MCP.md`](./docs/MCP.md), served at `/docs/mcp`.
@@ -102,7 +121,7 @@ A write is recorded as its `x-actor` header, else its token's name. `WAYPOINT_AD
 ## Developing
 
 ```sh
-npm ci
+npm ci               # also builds, and points git at .githooks/
 npm run dev          # the server on .waypoint-dev.db
 npm run typecheck
 npm test

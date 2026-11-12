@@ -40,7 +40,7 @@
     "test": "vitest run",
     "spec": "node src/spec.ts",
     "prepack": "npm run build",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "npm run build && (git config core.hooksPath .githooks 2>/dev/null || true)"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
