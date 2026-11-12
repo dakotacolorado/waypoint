@@ -7,8 +7,8 @@ description: How to run waypoint's checks, and where its beta and prod run. Use 
 
 It is not released by approval-service. Each host runs it by hand as the
 user service `waypoint.service`: beta on `dakotas-hp-laptop`, prod on
-`dakotas-lenovo-laptop`, each on 127.0.0.1:4400 and served at `/waypoint` on
-its Tailscale HTTPS name, its data in `~/.local/share/waypoint/waypoint.db`
+`dakotas-lenovo-laptop`, each on 127.0.0.1:4400 and served at the root of
+port 8444 on its Tailscale HTTPS name (as honed is at 8443), its data in `~/.local/share/waypoint/waypoint.db`
 and its admin token in `~/.config/waypoint/env`, never committed;
 `waypoint-backup.timer` copies a `waypoint backup` of it to the other host
 each night, keeping 14 days.

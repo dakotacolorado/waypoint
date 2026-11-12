@@ -2,7 +2,49 @@
 
 > Version 0.1.0
 
-One entity, the work item, at exactly three levels: an epic has no parent, every story has an epic, and every task has a story. `status` values are the board columns. A parent's `status` is derived from its open children's, by the rule on `WorkItemView.status`. `state` is separate: `open` until the item is closed, as `completed` or `not_planned`, from any status. An item may depend on its siblings, items of its type with its parent, and lists in `blockedBy` each dependency, its own or an item's above or below it, not yet `done` or closed. The service refuses with 409 a move to `in_progress`, `review` or `done` while `blockedBy` is not empty, and refuses a parent of the wrong type, a dependency on a non-sibling, a cycle, or deleting an item still referenced. Every create, update and delete is recorded in the item's `history`, which no operation edits. Beside its fields an item keeps `comments`, what people and workers say about it, and a `work-log`, what was done on it; neither changes the item or its history. A story or task not yet started can be `queued` to start on its own, in the order queued, as many at once as the queue's running limit: see `WorkItemView.queuePosition` and `/queue`. Acceptance criteria are ticked and unticked one at a time at `/items/{id}/met`. Tags, at `/tags`, are a shared list of labels, each a unique value, a colour and a description; an item carries some in `tags`, added and removed one at a time at `/items/{id}/tags`, each on the item and everything beneath it.
+A task tracker for people and their agents. Every request takes a bearer token, but the liveness check.
+
+## Items
+
+One kind of record, the **item**, at three levels:
+
+- an **epic** has no parent;
+- every **story** has an epic;
+- every **task** has a story.
+
+## Status and state
+
+- `status` is the board column: `backlog`, `ready`, `in_progress`, `review`, `done`.
+- A parent's status is **derived** from its open children (the rule is on `WorkItemView.status`): move the children, not the parent.
+- `state` is separate: `open`, or `closed` as `completed` or `not_planned`, from any status.
+
+## Dependencies
+
+- An item may depend only on its **siblings**: items of its own type with the same parent.
+- `blockedBy` lists what it still waits on: its own dependencies, and those of the items above and below it, not yet done or closed.
+- A move to `in_progress`, `review` or `done` is refused with **409** while `blockedBy` is not empty.
+- Also refused: a parent of the wrong type, a dependency on a non-sibling, a cycle, and deleting an item another still names.
+
+## Beside an item
+
+- **History**: every create, update and delete, never edited. `/items/{id}/history`
+- **Comments**: what people and agents say about it. `/items/{id}/comments`
+- **Work log**: what was done on it, with links. `/items/{id}/work-log`
+- **Acceptance criteria**: each with its own id (`c1`, `c2`, …), ticked and unticked one at a time. `/items/{id}/met`
+
+None of comments, the work log or ticks changes the item's other fields.
+
+## Tags
+
+A shared list of labels at `/tags`, each a unique value, a colour and a description. One put on an item at `/items/{id}/tags` goes on everything beneath it too.
+
+## The queue
+
+A story or task not yet started can be `queued` to start on its own, in order, as many at once as the running limit. See `WorkItemView.queuePosition` and `/queue`. It starts agents only where a worker-service is configured.
+
+## Who wrote it
+
+A write is recorded under its `claimed-by` header, else its token's name. Only an admin token's write that names nobody is the person's: it alone may sign off an epic, force a move past its dependencies, or set the queue's limit.
 
 
 ## Path Table
