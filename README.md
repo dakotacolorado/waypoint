@@ -10,9 +10,26 @@ npx @dakotajp/waypoint
 ```
 
 ```
-waypoint v0.1.0 listening on http://127.0.0.1:4400, data in ~/.waypoint/waypoint.db
-no worker-service configured: queued items wait
+██╗    ██╗ █████╗ ██╗   ██╗██████╗  ██████╗ ██╗███╗   ██╗████████╗    ▄▄████▄▄
+██║    ██║██╔══██╗╚██╗ ██╔╝██╔══██╗██╔═══██╗██║████╗  ██║╚══██╔══╝   ███▀  ▀███
+██║ █╗ ██║███████║ ╚████╔╝ ██████╔╝██║   ██║██║██╔██╗ ██║   ██║      ███▄  ▄███
+██║███╗██║██╔══██║  ╚██╔╝  ██╔═══╝ ██║   ██║██║██║╚██╗██║   ██║       ████████
+╚███╔███╔╝██║  ██║   ██║   ██║     ╚██████╔╝██║██║ ╚████║   ██║        ▀████▀
+ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝      ╚═════╝ ╚═╝╚═╝  ╚═══╝   ╚═╝          ██
+📍 v0.1.0
+
+Know where the work is, and what it waits on.
+Epics, stories and tasks for people and their agents, with dependencies and a status that rolls up from below.
+
+  ▸ Page      http://127.0.0.1:4400/
+  ▸ API       http://127.0.0.1:4400/items   docs http://127.0.0.1:4400/docs/api
+  ▸ MCP       http://127.0.0.1:4400/mcp     docs http://127.0.0.1:4400/docs/mcp
+
 admin token (shown once, kept only as a hash): wp_…
+
+  no worker-service configured: queued items wait
+  listening on http://127.0.0.1:4400, data in ~/.waypoint/waypoint.db
+  Ctrl+C to stop.
 ```
 
 Node 24 or later. Nothing else: no cloud account, no other service.
