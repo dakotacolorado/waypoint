@@ -1,4 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
+import { renameSync, rmSync } from "node:fs";
+import { backup, DatabaseSync } from "node:sqlite";
 import {
   DEFAULT_LIMIT,
   ForbiddenError,
@@ -109,6 +110,24 @@ export class WorkItemStore {
   /** The database at `path`, made if absent; `:memory:` for one that lasts as long as the process. */
   static open(path: string): WorkItemStore {
     return new WorkItemStore(new DatabaseSync(path));
+  }
+
+  /**
+   * Copies the database to `file` by SQLite's online backup, so it is
+   * consistent while writes go on; written beside it and renamed in, so
+   * `file` is never a partial copy. How many pages it copied.
+   */
+  async backup(file: string): Promise<number> {
+    const partial = `${file}.partial`;
+    rmSync(partial, { force: true });
+    try {
+      const pages = await backup(this.db, partial);
+      renameSync(partial, file);
+      return pages;
+    } catch (err) {
+      rmSync(partial, { force: true });
+      throw err;
+    }
   }
 
   async graph(): Promise<Graph> {
