@@ -1,2945 +1,1414 @@
-# waypoint
+# waypoint API reference
 
-> Version 0.1.0
+API version 2026-11-12
 
-A task tracker for people and their agents. Every request takes a bearer token, but the liveness check.
+A task tracker with dependency and status management. Tasks can wait on other tasks, and the service keeps a task from being started before what it waits on is closed, or finished before its acceptance criteria are met.
 
-## Items
+- `status` is one of `backlog`, `in_progress`, `review`, `done` or `cancelled`. `done` and `cancelled` are the closed statuses.
+- A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.
+- A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
+- A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
+- Cancelled tasks count as closed and are left out of lists unless asked for.
 
-One kind of record, the **item**, at three levels:
+Every request but `GetHealth` takes `Authorization: Bearer <token>`. A write is recorded as its `x-actor` header, else its token's name. Errors are `{code, message}`.
 
-- an **epic** has no parent;
-- every **story** has an epic;
-- every **task** has a story.
+## Operations
 
-## Status and state
+- [ListTasks](#listtasks): List tasks
+- [CreateTask](#createtask): Create a task
+- [GetTask](#gettask): Get a task
+- [UpdateTask](#updatetask): Update a task
+- [DeleteTask](#deletetask): Delete a task
+- [ListTaskHistory](#listtaskhistory): List a task's history
+- [ListComments](#listcomments): List comments
+- [CreateComment](#createcomment): Create a comment
+- [ListLabels](#listlabels): List labels
+- [CreateLabel](#createlabel): Create a label
+- [GetLabel](#getlabel): Get a label
+- [UpdateLabel](#updatelabel): Update a label
+- [DeleteLabel](#deletelabel): Delete a label
+- [GetHealth](#gethealth): Get health
 
-- `status` is the board column: `backlog`, `ready`, `in_progress`, `review`, `done`.
-- A parent's status is **derived** from its open children (the rule is on `WorkItemView.status`): move the children, not the parent.
-- `state` is separate: `open`, or `closed` as `completed` or `not_planned`, from any status.
+## Data types
 
-## Dependencies
+- [Task](#task)
+- [Subtask](#subtask)
+- [Criterion](#criterion)
+- [Error](#error)
+- [SubtaskInput](#subtaskinput)
+- [CriterionInput](#criterioninput)
+- [HistoryEntry](#historyentry)
+- [Comment](#comment)
+- [Label](#label)
+- [Health](#health)
 
-- An item may depend only on its **siblings**: items of its own type with the same parent.
-- `blockedBy` lists what it still waits on: its own dependencies, and those of the items above and below it, not yet done or closed.
-- A move to `in_progress`, `review` or `done` is refused with **409** while `blockedBy` is not empty.
-- Also refused: a parent of the wrong type, a dependency on a non-sibling, a cycle, and deleting an item another still names.
+---
 
-## Beside an item
+## ListTasks
 
-- **History**: every create, update and delete, never edited. `/items/{id}/history`
-- **Comments**: what people and agents say about it. `/items/{id}/comments`
-- **Work log**: what was done on it, with links. `/items/{id}/work-log`
-- **Acceptance criteria**: each with its own id (`c1`, `c2`, …), ticked and unticked one at a time. `/items/{id}/met`
+Returns tasks matching every filter given, oldest first. Cancelled tasks are left out unless `status` is `cancelled` or `includeCancelled` is `true`.
 
-None of comments, the work log or ticks changes the item's other fields.
+### Request syntax
 
-## Tags
+```http
+GET /tasks?status=status&ready=ready&label=label&assignee=assignee&includeCancelled=includeCancelled&maxResults=maxResults&nextToken=nextToken HTTP/1.1
+Authorization: Bearer token
+```
 
-A shared list of labels at `/tags`, each a unique value, a colour and a description. One put on an item at `/items/{id}/tags` goes on everything beneath it too.
+### Query parameters
 
-## The queue
+**status**  
+Only tasks with this status.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
 
-A story or task not yet started can be `queued` to start on its own, in order, as many at once as the running limit. See `WorkItemView.queuePosition` and `/queue`. It starts agents only where a worker-service is configured.
+**ready**  
+`true` for only tasks that can be started now; `false` for only those that can't.  
+Type: String. Valid values: `true` | `false`. Required: No.
 
-## Who wrote it
+**label**  
+Only tasks with this label, by ID or name.  
+Type: String. Required: No.
 
-A write is recorded under its `claimed-by` header, else its token's name. Only an admin token's write that names nobody is the person's: it alone may sign off an epic, force a move past its dependencies, or set the queue's limit.
+**assignee**  
+Only tasks assigned to this; `none` for only unassigned tasks.  
+Type: String. Required: No.
 
+**includeCancelled**  
+`true` to include cancelled tasks.  
+Type: String. Valid values: `true` | `false`. Required: No.
 
-## Path Table
+**maxResults**  
+The most results to return. Default 100.  
+Type: Integer. Range: 1 to 500. Required: No.
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | [/health](#gethealth) | Liveness check |
-| GET | [/skill](#getskill) | Read the client workers call this deployment with |
-| GET | [/items](#getitems) | List items |
-| POST | [/items](#postitems) | Create an item |
-| GET | [/items/{id}](#getitemsid) | Read one item |
-| PATCH | [/items/{id}](#patchitemsid) | Update the fields supplied, leaving the rest alone |
-| DELETE | [/items/{id}](#deleteitemsid) | Delete an item |
-| GET | [/items/{id}/history](#getitemsidhistory) | Read every write to an item and to everything beneath it |
-| GET | [/items/{id}/comments](#getitemsidcomments) | Read the comments on an item |
-| POST | [/items/{id}/comments](#postitemsidcomments) | Comment on an item |
-| GET | [/items/{id}/work-log](#getitemsidwork-log) | Read what was done on an item |
-| POST | [/items/{id}/work-log](#postitemsidwork-log) | Record a step done on an item |
-| POST | [/items/{id}/assignment](#postitemsidassignment) | Start an agent on an item |
-| POST | [/items/{id}/tags](#postitemsidtags) | Add a tag to an item |
-| DELETE | [/items/{id}/tags/{tag}](#deleteitemsidtagstag) | Take a tag off an item |
-| POST | [/items/{id}/met](#postitemsidmet) | Tick one acceptance criterion as met |
-| DELETE | [/items/{id}/met](#deleteitemsidmet) | Untick one acceptance criterion |
-| GET | [/queue](#getqueue) | The queue: its running limit, what runs, what waits and why, and the dispatcher's last run |
-| PATCH | [/queue](#patchqueue) | Set the running limit: the person's write alone |
-| GET | [/tags](#gettags) | List tags |
-| POST | [/tags](#posttags) | Create a tag |
-| GET | [/tags/{id}](#gettagsid) | Read one tag |
-| PATCH | [/tags/{id}](#patchtagsid) | Update the tag's fields supplied, leaving the rest alone |
-| DELETE | [/tags/{id}](#deletetagsid) | Delete a tag |
+**nextToken**  
+The `nextToken` from the previous page.  
+Type: String. Required: No.
 
-## Reference Table
+### Response syntax
 
-| Name | Path | Description |
-| --- | --- | --- |
-| bearerAuth | [#/components/securitySchemes/bearerAuth](#componentssecurityschemesbearerauth) |  |
-| Skill | [#/components/schemas/Skill](#componentsschemasskill) |  |
-| Error | [#/components/schemas/Error](#componentsschemaserror) |  |
-| WorkItemView | [#/components/schemas/WorkItemView](#componentsschemasworkitemview) |  |
-| AcceptanceCriterion | [#/components/schemas/AcceptanceCriterion](#componentsschemasacceptancecriterion) |  |
-| Tick | [#/components/schemas/Tick](#componentsschemastick) |  |
-| Assignment | [#/components/schemas/Assignment](#componentsschemasassignment) | The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status. |
-| WorkItem | [#/components/schemas/WorkItem](#componentsschemasworkitem) |  |
-| Conflict | [#/components/schemas/Conflict](#componentsschemasconflict) |  |
-| Blocked | [#/components/schemas/Blocked](#componentsschemasblocked) |  |
-| Draft | [#/components/schemas/Draft](#componentsschemasdraft) |  |
-| UpdatedItem | [#/components/schemas/UpdatedItem](#componentsschemasupdateditem) |  |
-| AgentOutcome | [#/components/schemas/AgentOutcome](#componentsschemasagentoutcome) | Present only on the person's sign-off of an epic (closing it `completed`) whose assignment names an agent: what was done to that agent. The close stands whatever it says. |
-| Patch | [#/components/schemas/Patch](#componentsschemaspatch) |  |
-| HistoryEntry | [#/components/schemas/HistoryEntry](#componentsschemashistoryentry) |  |
-| Change | [#/components/schemas/Change](#componentsschemaschange) |  |
-| Comment | [#/components/schemas/Comment](#componentsschemascomment) |  |
-| CommentDraft | [#/components/schemas/CommentDraft](#componentsschemascommentdraft) |  |
-| WorkLogEntry | [#/components/schemas/WorkLogEntry](#componentsschemasworklogentry) |  |
-| WorkLogDraft | [#/components/schemas/WorkLogDraft](#componentsschemasworklogdraft) |  |
-| Assigned | [#/components/schemas/Assigned](#componentsschemasassigned) |  |
-| TaggedItemView | [#/components/schemas/TaggedItemView](#componentsschemastaggeditemview) |  |
-| ItemTag | [#/components/schemas/ItemTag](#componentsschemasitemtag) |  |
-| Criterion | [#/components/schemas/Criterion](#componentsschemascriterion) |  |
-| Queue | [#/components/schemas/Queue](#componentsschemasqueue) |  |
-| QueueRunning | [#/components/schemas/QueueRunning](#componentsschemasqueuerunning) |  |
-| QueueItem | [#/components/schemas/QueueItem](#componentsschemasqueueitem) |  |
-| Queued | [#/components/schemas/Queued](#componentsschemasqueued) |  |
-| LastRun | [#/components/schemas/LastRun](#componentsschemaslastrun) | The dispatcher's last run; null before its first. |
-| QueuePatch | [#/components/schemas/QueuePatch](#componentsschemasqueuepatch) |  |
-| Tag | [#/components/schemas/Tag](#componentsschemastag) |  |
-| TagTaken | [#/components/schemas/TagTaken](#componentsschemastagtaken) |  |
-| TagDraft | [#/components/schemas/TagDraft](#componentsschemastagdraft) |  |
-| TagPatch | [#/components/schemas/TagPatch](#componentsschemastagpatch) |  |
+```http
+HTTP/1.1 200
+Content-type: application/json
 
-## Path Details
-
-***
-
-### [GET]/health
-
-- Summary  
-  Liveness check
-
-- Operation id  
-  healthCheck
-
-- Tags  
-  meta
-
-#### Responses
-
-- 200 Service is up.
-
-`application/json`
-
-```typescript
 {
-  ok: enum[true]
-  // The package's version.
-  version: string
-  // The commit this copy was built from: 40 hex characters, `-dirty` when its tree differed, or `unknown`.
-  commit: string
+   "tasks": [ {
+      "id": "string",
+      "shortId": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ],
+      "subtasks": [ {
+         "id": "string",
+         "title": "string",
+         "description": "string",
+         "status": "backlog | in_progress | review | done | cancelled",
+         "dependsOn": [ "string" ],
+         "blockedBy": [ "string" ]
+      } ],
+      "criteria": [ {
+         "id": "string",
+         "text": "string",
+         "met": boolean,
+         "metBy": "string",
+         "metAt": "string"
+      } ],
+      "labels": [ "string" ],
+      "assignee": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "blockedBy": [ "string" ],
+      "ready": boolean
+   } ],
+   "nextToken": "string"
 }
 ```
 
-***
+### Response elements
 
-### [GET]/skill
+**tasks**  
+The tasks.  
+Type: Array of [Task](#task) objects.
 
-- Summary  
-  Read the client workers call this deployment with
+**nextToken**  
+The token for the next page, or null on the last.  
+Type: String. Nullable: Yes.
 
-- Operation id  
-  getSkill
+### Errors
 
-- Description  
-  The work-tracker skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed. Its `SKILL.md` is not here: guidance stays in document-service's `global`.
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
 
-- Tags  
-  meta
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
 
-- Security  
-  bearerAuth
+---
 
-#### Responses
+## CreateTask
 
-- 200 The skill's files.
+Creates a task in `backlog`, unless `status` says otherwise. A status past `backlog` is held to the same rules as `UpdateTask`.
 
-`application/json`
+### Request syntax
 
-```typescript
+```http
+POST /tasks HTTP/1.1
+Authorization: Bearer token
+x-actor: string
+Content-type: application/json
+
 {
-  // The skill's name, which its files are under.
-  key: string
-  // The deployed tree's commit count, 0 when deployed from outside git.
-  version: integer
-  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
-  commit: string
-  files: {
-    // Under the worker's Claude Code folder: `skills/work-tracker/bin/…` or `skills/work-tracker/reference/…`.
-    path: string
-    content: string
-    executable: boolean
-  }[]
+   "title": "string",
+   "description": "string",
+   "status": "backlog | in_progress | review | done | cancelled",
+   "dependsOn": [ "string" ],
+   "subtasks": [ {
+      "id": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ]
+   } ],
+   "criteria": [ {
+      "id": "string",
+      "text": "string",
+      "met": boolean
+   } ],
+   "labels": [ "string" ],
+   "assignee": "string",
+   "clientToken": "string"
 }
 ```
 
-- 401 Missing or incorrect bearer token.
+### Request headers
 
-`application/json`
+**x-actor**  
+Who is making the write, recorded in history in place of the token's name. For a token several callers share.  
+Type: String. Length: 0 to 200. Required: No.
 
-```typescript
+### Request body
+
+**title**  
+A short name for the task.  
+Type: String. Length: 1 to 200. Required: Yes.
+
+**description**  
+What the task is, in Markdown.  
+Type: String. Length: 0 to 20000. Required: No.
+
+**status**  
+Where it stands. `done` and `cancelled` are the closed statuses.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
+
+**dependsOn**  
+The IDs of the tasks this one waits on.  
+Type: Array of strings. At most 50 items. Required: No.
+
+**subtasks**  
+The steps of the work, in order. On update this is the whole list: a subtask left out is removed.  
+Type: Array of [SubtaskInput](#subtaskinput) objects. At most 50 items. Required: No.
+
+**criteria**  
+The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed.  
+Type: Array of [CriterionInput](#criterioninput) objects. At most 50 items. Required: No.
+
+**labels**  
+Labels, each by ID or name.  
+Type: Array of strings. At most 20 items. Required: No.
+
+**assignee**  
+Who the task is assigned to; null for no one.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
+**clientToken**  
+A unique string you choose. Retrying a request with the same token returns what the first created, instead of creating another.  
+Type: String. Length: 1 to 64. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 201
+Content-type: application/json
+
 {
-  error: string
-}
-```
-
-***
-
-### [GET]/items
-
-- Summary  
-  List items
-
-- Operation id  
-  listItems
-
-- Description  
-  Filters combine by AND. What can be started now is the `ready` items whose `blockedBy` is empty; any other is refused until it is.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Query)
-
-```typescript
-status?: enum[backlog, ready, in_progress, review, done]
-```
-
-```typescript
-// `open` for only what still needs looking at.
-// `open` for only what still needs looking at.
-state?: enum[open, closed]
-```
-
-```typescript
-type?: enum[epic, story, task]
-```
-
-```typescript
-// Only the children of this item, by its id or a prefix of it.
-// Only the children of this item, by its id or a prefix of it.
-parent?: string //pattern: ^[0-9a-fA-F-]{8,36}$
-```
-
-```typescript
-// Only items whose `heldBy` is exactly this, as `heldBy=agent-1&state=open`.
-// Only items whose `heldBy` is exactly this, as `heldBy=agent-1&state=open`.
-heldBy?: string
-```
-
-```typescript
-// Only items whose `reviewedBy` is exactly this.
-// Only items whose `reviewedBy` is exactly this.
-reviewedBy?: string
-```
-
-```typescript
-// `true` for only the queue, listed in its order, next to start first; `false` for only what is not in it. See `WorkItemView.queuePosition`.
-// `true` for only the queue, listed in its order, next to start first; `false` for only what is not in it. See `WorkItemView.queuePosition`.
-queued?: enum[true, false]
-```
-
-```typescript
-// Only items carrying this tag, by its id or its value in any case, as `tag=ui&state=open`. A tag that does not exist gives an empty list.
-// Only items carrying this tag, by its id or its value in any case, as `tag=ui&state=open`. A tag that does not exist gives an empty list.
-tag?: string
-```
-
-#### Responses
-
-- 200 The matching items.
-
-`application/json`
-
-```typescript
-{
-  items: #/components/schemas/WorkItem & {
-     // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-     status?: enum[backlog, ready, in_progress, review, done]
-     // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-     shortId: string
-     children: string[] //format: uuid
-     blockedBy: string[] //format: uuid
-     // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-     finishedEarly: boolean
-     // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-     queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
-   }[]
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [POST]/items
-
-- Summary  
-  Create an item
-
-- Operation id  
-  createItem
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The item to create.
-
-- application/json
-
-```typescript
-{
-  type?: enum[epic, story, task] //default: task
-  title: string //minLength: 1 //maxLength: 200
-  body?: string //maxLength: 20000 //default: 
-  acceptanceCriteria?: Partial(string) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id?: string //pattern: ^c[1-9][0-9]*$
-     text: string //minLength: 1
-   })[] //maxItems: 50
-  // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
-  status?: enum[backlog, ready, in_progress, review, done] //default: backlog
-  // A story for a task, an epic for a story, null only for an epic.
-  parent?: string | null //pattern: ^[0-9a-fA-F-]{8,36}$ //default: null
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  dependsOn?: string[] //pattern: ^[0-9a-fA-F-]{8,36}$ //maxItems: 50
-  // Not accepted: refused with 400 whatever its value. See `WorkItem.tags`.
-  tags?: any
-}
-```
-
-#### Responses
-
-- 201 The created item.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Created at `in_progress`, `review` or `done` with a dependency not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-Partial(#/components/schemas/Conflict) & Partial(#/components/schemas/Blocked)
-```
-
-***
-
-### [GET]/items/{id}
-
-- Summary  
-  Read one item
-
-- Operation id  
-  getItem
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Responses
-
-- 200 The item.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [PATCH]/items/{id}
-
-- Summary  
-  Update the fields supplied, leaving the rest alone
-
-- Operation id  
-  updateItem
-
-- Description  
-  Setting `done` on a parent whose open children are not all `done` is refused with 400. Moving an item to `in_progress`, `review` or `done`, or under a new parent while there, is refused with 409 while its `blockedBy` is not empty, unless the person sends `force`. A parent's status follows its children's, whatever is written to it, but writing it `in_progress`, `review` or `done` while it reads `backlog` or `ready` is its Start, refused the same way.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-Fields to change.
-
-- application/json
-
-```typescript
-{
-  type?: enum[epic, story, task]
-  title?: string //minLength: 1 //maxLength: 200
-  body?: string //maxLength: 20000
-  acceptanceCriteria?: Partial(string) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id?: string //pattern: ^c[1-9][0-9]*$
-     text: string //minLength: 1
-   })[] //maxItems: 50
-  met?: string[] //minLength: 1 //maxItems: 50
-  // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
-  status?: enum[backlog, ready, in_progress, review, done]
-  // Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`.
-  state?: enum[open, closed]
-  // Required with, and only with, `state: closed`.
-  closedReason?: enum[completed, not_planned]
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  parent?: string | null //pattern: ^[0-9a-fA-F-]{8,36}$
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  dependsOn?: string[] //pattern: ^[0-9a-fA-F-]{8,36}$ //maxItems: 50
-  // The worker reviewing the item, as the reviewer's own name; null clears it.
-  reviewedBy?: string | null //minLength: 1 //maxLength: 200
-  // Move the item to `in_progress`, `review` or `done` though its `blockedBy` is not empty, recorded as the history entry's `overrode`. The person's alone: refused with 403 from a write that sends `claimed-by`, as every worker's does. Changes nothing on its own.
-  force?: enum[true]
-  // `true` queues the item to start on its own, at the back of the queue, or keeps its place if already queued; `false` takes it off. Only an open epic, story or task that reads `backlog` or `ready` can be queued, as this write leaves it: any other is refused with 400, naming why. Recorded in `history` as a change to `queuedAt`.
-  queued?: boolean
-  // Not accepted: refused with 400 whatever its value. See `WorkItem.tags`.
-  tags?: any
-}
-```
-
-#### Responses
-
-- 200 The updated item.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItemView & {
-   // Present only on the person's sign-off of an epic (closing it `completed`) whose assignment names an agent: what was done to that agent. The close stands whatever it says.
-   agent: {
-     // The agent's id in worker-service, from the assignment.
-     id: string //format: uuid
-     name: string
-     // `retired`: worker-service retired it now. `already_retired`: it was retired, or worker-service has no record of it, so nothing was retired. `refused`: worker-service would not retire it, in `said`.
-     outcome: enum[retired, already_retired, refused]
-     // The outcome in a line for the person, with worker-service's words when it refused.
-     said: string
+   "task": {
+      "id": "string",
+      "shortId": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ],
+      "subtasks": [ {
+         "id": "string",
+         "title": "string",
+         "description": "string",
+         "status": "backlog | in_progress | review | done | cancelled",
+         "dependsOn": [ "string" ],
+         "blockedBy": [ "string" ]
+      } ],
+      "criteria": [ {
+         "id": "string",
+         "text": "string",
+         "met": boolean,
+         "metBy": "string",
+         "metAt": "string"
+      } ],
+      "labels": [ "string" ],
+      "assignee": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "blockedBy": [ "string" ],
+      "ready": boolean
    }
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 403 Sent with a `claimed-by`, a `force`, or closing an epic that has children as `completed`: only the person may override `blockedBy` or sign off an epic.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 A dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-Partial(#/components/schemas/Conflict) & Partial(#/components/schemas/Blocked)
-```
-
-***
-
-### [DELETE]/items/{id}
-
-- Summary  
-  Delete an item
-
-- Operation id  
-  deleteItem
-
-- Description  
-  Refused while another item names it as a parent or a dependency. The item's history outlives it.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### Responses
-
-- 204 Deleted, or already absent, which records nothing.
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Another item still references it, other writes kept landing first, or the id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [GET]/items/{id}/history
-
-- Summary  
-  Read every write to an item and to everything beneath it
-
-- Operation id  
-  getItemHistory
-
-- Description  
-  One entry per create, update and delete, recorded by the service in the same transaction as the write, under the item written and every item above it at the time; a move files it under both sides. A write beneath an item is how a derived `status` changes, so that change has no entry of its own. No operation edits or removes an entry, and deleting an item leaves its history readable here.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Responses
-
-- 200 The item's history.
-
-`application/json`
-
-```typescript
-{
-  entries: {
-    // The item written: this one, or one beneath it when the write was made.
-    item: string //format: uuid
-    action: enum[created, updated, deleted]
-    changes: {
-      // `met` is recorded as the ids of the criteria ticked.
-      field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
-      // Null on `created`.
-      from: Partial(string) & Partial(string[]) & Partial({
-         // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-         id: string //pattern: ^c[1-9][0-9]*$
-         text: string
-       }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
-      // Null on `deleted`.
-      to: Partial(string) & Partial(string[]) & Partial({
-         // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-         id: string //pattern: ^c[1-9][0-9]*$
-         text: string
-       }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
-    }[]
-    // When the service recorded it.
-    at: string
-    // The `claimed-by` header the write was sent with, unverified: callers sharing a token say who they are by it. Without one, the name of the write's token; null for an admin token's write that said nothing, the person's.
-    claimedBy: string | null
-    overrode: string[] //format: uuid
-  }[]
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id, and none ever recorded.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [GET]/items/{id}/comments
-
-- Summary  
-  Read the comments on an item
-
-- Operation id  
-  listItemComments
-
-- Description  
-  What people and workers said to each other about the item, not beneath it. Written by any caller and edited by none, apart from the item's fields and their `history`. Writing one changes nothing on the item and records no history entry.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Responses
-
-- 200 The item's comments.
-
-`application/json`
-
-```typescript
-{
-  comments: {
-    id: string //format: uuid
-    // The item it was written on.
-    item: string //format: uuid
-    // The `claimed-by` header it was written with, unverified, as a history entry's `claimedBy`. Null when the writer said nothing, as a person writing from the page does.
-    author: string | null
-    // When the service recorded it.
-    at: string
-    // Markdown.
-    body: string //minLength: 1 //maxLength: 20000
-  }[]
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [POST]/items/{id}/comments
-
-- Summary  
-  Comment on an item
-
-- Operation id  
-  addItemComment
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The comment.
-
-- application/json
-
-```typescript
-{
-  // Markdown.
-  body: string //minLength: 1 //maxLength: 20000
-}
-```
-
-#### Responses
-
-- 201 The comment, as stored.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // The item it was written on.
-  item: string //format: uuid
-  // The `claimed-by` header it was written with, unverified, as a history entry's `claimedBy`. Null when the writer said nothing, as a person writing from the page does.
-  author: string | null
-  // When the service recorded it.
-  at: string
-  // Markdown.
-  body: string //minLength: 1 //maxLength: 20000
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [GET]/items/{id}/work-log
-
-- Summary  
-  Read what was done on an item
-
-- Operation id  
-  listItemWorkLog
-
-- Description  
-  A worker's record of each step it finished on the item, kept apart from comments. Written by any caller and edited by none, apart from the item's fields and their `history`. Writing one changes nothing on the item and records no history entry.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Responses
-
-- 200 The item's work log.
-
-`application/json`
-
-```typescript
-{
-  entries: #/components/schemas/Comment & {
-     links: string[]
-   }[]
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [POST]/items/{id}/work-log
-
-- Summary  
-  Record a step done on an item
-
-- Operation id  
-  addItemWorkLogEntry
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-What was done.
-
-- application/json
-
-```typescript
-{
-  // What was done, in Markdown.
-  body: string //minLength: 1 //maxLength: 20000
-  links?: string[] //format: uri //maxLength: 2000 //maxItems: 20
-}
-```
-
-#### Responses
-
-- 201 The entry, as stored.
-
-`application/json`
-
-```typescript
-#/components/schemas/Comment & {
-   links: string[]
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [POST]/items/{id}/assignment
-
-- Summary  
-  Start an agent on an item
-
-- Operation id  
-  assignItem
-
-- Description  
-  The one way to start work on an item. In one write it records a new `assignment`, refused with 409 while the item's current one names an agent still live: not retired, and not stopped after saying `done`. On an item whose status is its own that write also moves it to `in_progress` held by the assignment's `name`, so it is refused with 409 as a move is while `blockedBy` is not empty; a parent not yet reading started is refused the same, as its Start. The item and everything beneath it leave the queue. Then worker-service makes the agent, named `name`, briefed with the item, labelled `ticket: <title>`, given the `tickets` document and stopped once it says `done`; its id is written to `assignment.agent`. A name already taken is the same agent made by an earlier try, and is taken as made. If worker-service makes none, the item is put back as it was and the refusal is answered with 502 in worker-service's words. A closed item is refused with 400.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### Responses
-
-- 201 The item, its `assignment` naming the agent made.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 An agent still holds the item, named in `assignment`, or is still being made; a dependency is not yet `done` or closed; other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-Partial(#/components/schemas/Assigned) & Partial(#/components/schemas/Blocked) & Partial(#/components/schemas/Conflict)
-```
-
-- 502 worker-service made no agent, in its words; the item is as it was.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No address or token for worker-service is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [POST]/items/{id}/tags
-
-- Summary  
-  Add a tag to an item
-
-- Operation id  
-  addItemTag
-
-- Description  
-  Adds one tag to `tags` on the item and on every item beneath it, open or closed, in one write. Each item it changes records its own `tags` change in `history`; one already carrying the tag is left alone and records nothing. Refused with 400, changing nothing, for a tag that does not exist, or for one past the 20 an item may carry on any item it reaches, naming those.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The tag to add.
-
-- application/json
-
-```typescript
-{
-  // A tag's id, or its value in any case.
-  tag: string //minLength: 1 //maxLength: 40
-}
-```
-
-#### Responses
-
-- 200 The item, carrying the tag.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItemView & {
-   // How many items beneath this one the write changed.
-   reached: integer //minimum: 0
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [DELETE]/items/{id}/tags/{tag}
-
-- Summary  
-  Take a tag off an item
-
-- Operation id  
-  removeItemTag
-
-- Description  
-  Removes one tag from `tags` on the item and on every item beneath it, open or closed, in one write, each item it changes recording its own `tags` change in `history`. Items not carrying it, or a tag that does not exist, are left alone and record nothing. Taken off a child alone, its parent and siblings keep it.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-```typescript
-// A tag's id, or its value in any case.
-// A tag's id, or its value in any case.
-tag: string //minLength: 1 //maxLength: 40
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### Responses
-
-- 200 The item, without the tag.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItemView & {
-   // How many items beneath this one the write changed.
-   reached: integer //minimum: 0
- }
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [POST]/items/{id}/met
-
-- Summary  
-  Tick one acceptance criterion as met
-
-- Operation id  
-  tickCriterion
-
-- Description  
-  Adds one tick to `met`, by the criterion's id (or unique text), recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The criterion to tick.
-
-- application/json
-
-```typescript
-{
-  // The criterion's id, or its text when no other criterion of the item reads the same.
-  criterion: string //minLength: 1
-}
-```
-
-#### Responses
-
-- 200 The item, with the criterion ticked.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
-
-- 400 The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [DELETE]/items/{id}/met
-
-- Summary  
-  Untick one acceptance criterion
-
-- Operation id  
-  untickCriterion
-
-- Description  
-  Removes that criterion's tick from `met`, leaving every other. One not ticked changes nothing and records no history. Refused with 400 for a criterion the item does not have.
-
-- Tags  
-  items
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-// The item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-id: string
-```
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The criterion to untick.
-
-- application/json
-
-```typescript
-{
-  // The criterion's id, or its text when no other criterion of the item reads the same.
-  criterion: string //minLength: 1
-}
-```
-
-#### Responses
-
-- 200 The item, without the criterion's tick.
-
-`application/json`
-
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
-
-- 400 The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No item with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with.
-
-`application/json`
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
-
-***
-
-### [GET]/queue
-
-- Summary  
-  The queue: its running limit, what runs, what waits and why, and the dispatcher's last run
-
-- Operation id  
-  getQueue
-
-- Description  
-  The dispatcher runs every 5 minutes: while fewer than `limit` running places are taken, it requests an implementer for each `next` item in order. A queued epic is requested once, at the epic level, and what is queued beneath it leaves the queue. A blocked item keeps its place. An agent's state is read from worker-service on each call.
-
-- Tags  
-  queue
-
-- Security  
-  bearerAuth
-
-#### Responses
-
-- 200 The queue.
-
-`application/json`
-
-```typescript
-{
-  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
-  limit: integer //minimum: 1 //maximum: 10
-  running: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // The agent the queue's request started.
-    agent: {
-      // The agent's id in worker-service, which is its request's.
-      id: string //format: uuid
-      name: string
-      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
-      state: enum[idle, working, waiting, interrupted, retired, unknown]
-    }
-    // When the queue requested it: its assignment's `at`.
-    startedAt: string
-  }[]
-  queued: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
-    position: integer | null
-    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
-    state: enum[next, blocked, requested]
-    blockedBy: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }[]
-    // While `requested`, once the request is recorded; null otherwise.
-    request: {
-      id: string //format: uuid
-      // The name its agent will have.
-      name: string
-      // Why it has not started, in worker-service's words.
-      why: string
-    }
-  }[]
-  // The dispatcher's last run; null before its first.
-  last: {
-    // When the dispatcher's last run ended.
-    at: string
-    requested: {
-      item: string //format: uuid
-      shortId: string
-      request: string //format: uuid
-      // The name of the agent the request starts.
-      worker: string
-      state: enum[waiting, started, withdrawn]
-      // While `waiting`, why, in worker-service's words.
-      why: string | null
-    }[]
-    why: string[]
-  }
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [PATCH]/queue
-
-- Summary  
-  Set the running limit: the person's write alone
-
-- Operation id  
-  updateQueue
-
-- Description  
-  Raising it starts more on the dispatcher's next run, within 5 minutes. Lowering it stops nothing running: nothing new starts until fewer than it are.
-
-- Tags  
-  queue
-
-- Security  
-  bearerAuth
-
-#### Headers
-
-```typescript
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-// Who is making the write, recorded in its history entry as said and not checked. Absent, the write is its token's: an admin token's is the person's, which alone may sign off an epic, force a move or set the queue's limit.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-The new limit.
-
-- application/json
-
-```typescript
-{
-  // From 1 to 10.
-  limit: integer //minimum: 1 //maximum: 10
-}
-```
-
-#### Responses
-
-- 200 The queue, at its new limit.
-
-`application/json`
-
-```typescript
-{
-  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
-  limit: integer //minimum: 1 //maximum: 10
-  running: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // The agent the queue's request started.
-    agent: {
-      // The agent's id in worker-service, which is its request's.
-      id: string //format: uuid
-      name: string
-      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
-      state: enum[idle, working, waiting, interrupted, retired, unknown]
-    }
-    // When the queue requested it: its assignment's `at`.
-    startedAt: string
-  }[]
-  queued: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
-    position: integer | null
-    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
-    state: enum[next, blocked, requested]
-    blockedBy: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }[]
-    // While `requested`, once the request is recorded; null otherwise.
-    request: {
-      id: string //format: uuid
-      // The name its agent will have.
-      name: string
-      // Why it has not started, in worker-service's words.
-      why: string
-    }
-  }[]
-  // The dispatcher's last run; null before its first.
-  last: {
-    // When the dispatcher's last run ended.
-    at: string
-    requested: {
-      item: string //format: uuid
-      shortId: string
-      request: string //format: uuid
-      // The name of the agent the request starts.
-      worker: string
-      state: enum[waiting, started, withdrawn]
-      // While `waiting`, why, in worker-service's words.
-      why: string | null
-    }[]
-    why: string[]
-  }
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 403 Sent with a `claimed-by`: only the person sets the running limit.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [GET]/tags
-
-- Summary  
-  List tags
-
-- Operation id  
-  listTags
-
-- Tags  
-  tags
-
-- Security  
-  bearerAuth
-
-#### Responses
-
-- 200 Every tag.
-
-`application/json`
-
-```typescript
-{
-  tags: {
-    id: string //format: uuid
-    // The text shown on the chip. Unique among tags case-insensitively.
-    value: string //minLength: 1 //maxLength: 40
-    // The chip's background, `#rrggbb`, stored as given.
-    color: string //pattern: ^#[0-9a-fA-F]{6}$
-    // What the tag is for, shown when hovering its chip.
-    description: string //maxLength: 500
-    createdAt: string
-    updatedAt: string
-  }[]
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [POST]/tags
-
-- Summary  
-  Create a tag
-
-- Operation id  
-  createTag
-
-- Tags  
-  tags
-
-- Security  
-  bearerAuth
-
-#### RequestBody
-
-The tag to create.
-
-- application/json
-
-```typescript
-{
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description?: string //maxLength: 500 //default: 
-}
-```
-
-#### Responses
-
-- 201 The created tag.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description: string //maxLength: 500
-  createdAt: string
-  updatedAt: string
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Another tag already has the value, case-insensitively; or other writes kept landing first, so retry.
-
-`application/json`
-
-```typescript
-Partial(#/components/schemas/TagTaken) & Partial(#/components/schemas/Error)
-```
-
-***
-
-### [GET]/tags/{id}
-
-- Summary  
-  Read one tag
-
-- Operation id  
-  getTag
-
-- Tags  
-  tags
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The tag's id.
-// The tag's id.
-id: string //format: uuid
-```
-
-#### Responses
-
-- 200 The tag.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description: string //maxLength: 500
-  createdAt: string
-  updatedAt: string
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No tag with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [PATCH]/tags/{id}
-
-- Summary  
-  Update the tag's fields supplied, leaving the rest alone
-
-- Operation id  
-  updateTag
-
-- Tags  
-  tags
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The tag's id.
-// The tag's id.
-id: string //format: uuid
-```
-
-#### RequestBody
-
-Fields to change.
-
-- application/json
-
-```typescript
-{
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value?: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color?: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description?: string //maxLength: 500
-}
-```
-
-#### Responses
-
-- 200 The updated tag.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description: string //maxLength: 500
-  createdAt: string
-  updatedAt: string
-}
-```
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No tag with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Another tag already has the value, case-insensitively; or other writes kept landing first, so retry.
-
-`application/json`
-
-```typescript
-Partial(#/components/schemas/TagTaken) & Partial(#/components/schemas/Error)
-```
-
-***
-
-### [DELETE]/tags/{id}
-
-- Summary  
-  Delete a tag
-
-- Operation id  
-  deleteTag
-
-- Description  
-  Refused with 409 while any item, open or closed, carries it: take it off them first.
-
-- Tags  
-  tags
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-// The tag's id.
-// The tag's id.
-id: string //format: uuid
-```
-
-#### Responses
-
-- 204 Deleted, or already absent.
-
-- 400 The request failed validation, or breaks the item graph.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 Items still carry the tag, named by how many and the first few by short id; or other writes kept landing first, so retry.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-## References
-
-### #/components/securitySchemes/bearerAuth
-
-- Type: http
-- Scheme: bearer
-
-### #/components/schemas/Skill
-
-```typescript
-{
-  // The skill's name, which its files are under.
-  key: string
-  // The deployed tree's commit count, 0 when deployed from outside git.
-  version: integer
-  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
-  commit: string
-  files: {
-    // Under the worker's Claude Code folder: `skills/work-tracker/bin/…` or `skills/work-tracker/reference/…`.
-    path: string
-    content: string
-    executable: boolean
-  }[]
 }
 ```
 
-### #/components/schemas/Error
+### Response elements
 
-```typescript
-{
-  error: string
-}
-```
+**task**  
+Type: [Task](#task) object.
 
-### #/components/schemas/WorkItemView
+### Errors
 
-```typescript
-#/components/schemas/WorkItem & {
-   // Stored on an item without children. On a parent it is derived from its open children's statuses alone, by the first of these that holds: (1) every child `done` gives `done`; (2) no child `backlog`, `ready` or `in_progress` gives `review`; (3) any child `in_progress`, `review` or `done` gives `in_progress`; (4) every child `ready` gives `ready`; (5) otherwise `backlog`. A parent whose children are all closed counts them as all `done`. So finished work beside unstarted work reads `in_progress`, a parent reads `review` only when nothing beneath it is unstarted or in progress, and `done` once everything beneath it is, with no write to it; it reads `in_progress` or `review` again as soon as a child does. An item left without children reads its stored status.
-   status?: enum[backlog, ready, in_progress, review, done]
-   // The shortest prefix of `id`, at least 8 characters, that starts no other item's id: what people and workers call the item. Every route taking an item's id takes this too. A new item's id is drawn so its first 8 characters start no other's, so a `shortId` once read back never comes to name a second item.
-   shortId: string
-   children: string[] //format: uuid
-   blockedBy: string[] //format: uuid
-   // `done` while some dependency of its own is neither `done` nor closed: work finished before dependencies gated the move, or given a dependency once done. Derived on read and never stored, so it clears once every dependency is `done` or closed, or the item leaves `done`.
-   finishedEarly: boolean
-   // The item's place in the queue, 1 for the next to start, counting the open items with a `queuedAt` whose `status` reads `backlog` or `ready`, in the order queued; null when not among them. A parent queued while its children read as started is left out until they do not. Derived on read, so it moves up as soon as an item ahead is dequeued, closed or started.
-   queuePosition: integer | null //minimum: 0 //exclusiveMinimum: true
- }
-```
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which. Also: a dependency cycle, among tasks or among its subtasks.  
+HTTP status: 400
 
-### #/components/schemas/AcceptanceCriterion
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
 
-```typescript
-{
-  // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-  id: string //pattern: ^c[1-9][0-9]*$
-  text: string
-}
-```
+**ResourceNotFoundException**  
+A task or label named in the body doesn't exist.  
+HTTP status: 404
 
-### #/components/schemas/Tick
+**ConflictException**  
+The status given is refused: see `UpdateTask`.  
+HTTP status: 409
 
-```typescript
-{
-  // The id of the criterion ticked.
-  criterion: string //pattern: ^c[1-9][0-9]*$
-  // The `claimed-by` of the write that ticked it, unverified; null when it said nothing.
-  by: string | null
-  // When it was ticked.
-  at: string
-}
-```
+---
 
-### #/components/schemas/Assignment
+## GetTask
 
-```typescript
-// The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status.
-{
-  // Drawn when the assignment is made; a new start on the item makes a new one.
-  id: string //format: uuid
-  // The agent's id in worker-service, written once worker-service has made it, or for the queue's start once it has recorded the request, whose id its agent takes; null while it is being made.
-  agent: string | null //format: uuid
-  // The agent's name, `<shortId>-<first 8 characters of id>`, or for the queue's start, once its request is recorded, `implementer-<first 8 characters of agent>`: who holds the item, and how a retry finds the agent already made.
-  name: string
-  // The `claimed-by` of the request that made it, unverified; null when it said nothing, as the person's from the page.
-  by: string | null
-  // When it was made.
-  at: string
-  // Null while the assignment stands. Set when the item is closed, or an item above it closes it, and kept on reopening: an ended assignment holds nothing, and the next start makes a new one without asking worker-service.
-  ended: {
-    // When it ended.
-    at: string
-    // Why, as the service says it: the item closed, or its agent retired.
-    why: string
-  }
-}
-```
+Get a task.
 
-### #/components/schemas/WorkItem
+### Request syntax
 
-```typescript
-{
-  id: string //format: uuid
-  type: enum[epic, story, task]
-  title: string
-  body: string
-  acceptanceCriteria: {
-    // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-    id: string //pattern: ^c[1-9][0-9]*$
-    text: string
-  }[]
-  met: {
-    // The id of the criterion ticked.
-    criterion: string //pattern: ^c[1-9][0-9]*$
-    // The `claimed-by` of the write that ticked it, unverified; null when it said nothing.
-    by: string | null
-    // When it was ticked.
-    at: string
-  }[]
-  status: enum[backlog, ready, in_progress, review, done]
-  // Whether anyone still needs to see the item, apart from where the work got to: `status` is never changed by closing, and reaching `done` does not close. Every item is created `open`. Closing an item closes what is open beneath it; reopening writes no other item.
-  state: enum[open, closed]
-  // Why a closed item closed: `completed`, or `not_planned` for work abandoned at any status. Null while open.
-  closedReason: enum[completed, not_planned, ] | null
-  // Required, and exactly one level up: a task's is a story, a story's is an epic. An epic's is null. A create, move or re-type that breaks this is refused with 400.
-  parent: string | null //format: uuid
-  dependsOn: string[] //format: uuid
-  createdAt: string
-  updatedAt: string
-  // Who is on the item: the `claimed-by` of the write that last moved its stored `status` to `in_progress`, unverified like a history entry's `claimedBy`, and null if that write said nothing. Set by the service only. Kept through `review`; cleared by a move to `backlog`, `ready` or `done`, or by closing, and set again only by a later move to `in_progress`, so reopening alone leaves it null. A write that leaves `status` as it was leaves it as it was. Null while `status` is derived.
-  heldBy: string | null
-  // The reviewer that last picked the item up for review, as approval-service's reviewer `reviewer-<id>`: written only by a write's `reviewedBy`, unverified like `heldBy`. Null until one is written. Kept through every move and closing, and replaced by the next review's write, so after a send-back it names the last reviewer until a new one picks it up.
-  reviewedBy: string | null
-  // When the item was queued to start on its own, by a write's `queued`; null when it is not queued. Cleared in the same write that closes the item, moves its stored `status` to `in_progress`, `review` or `done`. Queuing it again keeps the time.
-  queuedAt: string | null
-  tags: string[] //format: uuid //maxItems: 20
-  // The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status.
-  assignment: {
-    // Drawn when the assignment is made; a new start on the item makes a new one.
-    id: string //format: uuid
-    // The agent's id in worker-service, written once worker-service has made it, or for the queue's start once it has recorded the request, whose id its agent takes; null while it is being made.
-    agent: string | null //format: uuid
-    // The agent's name, `<shortId>-<first 8 characters of id>`, or for the queue's start, once its request is recorded, `implementer-<first 8 characters of agent>`: who holds the item, and how a retry finds the agent already made.
-    name: string
-    // The `claimed-by` of the request that made it, unverified; null when it said nothing, as the person's from the page.
-    by: string | null
-    // When it was made.
-    at: string
-    // Null while the assignment stands. Set when the item is closed, or an item above it closes it, and kept on reopening: an ended assignment holds nothing, and the next start makes a new one without asking worker-service.
-    ended: {
-      // When it ended.
-      at: string
-      // Why, as the service says it: the item closed, or its agent retired.
-      why: string
-    }
-  }
-}
+```http
+GET /tasks/{taskId} HTTP/1.1
+Authorization: Bearer token
 ```
 
-### #/components/schemas/Conflict
-
-```typescript
-#/components/schemas/Error & {
-   matches?: string[] //format: uuid
- }
-```
+### URI request parameters
 
-### #/components/schemas/Blocked
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
 
-```typescript
-#/components/schemas/Error & {
-   blockedBy: string[] //format: uuid
- }
-```
+### Response syntax
 
-### #/components/schemas/Draft
+```http
+HTTP/1.1 200
+Content-type: application/json
 
-```typescript
 {
-  type?: enum[epic, story, task] //default: task
-  title: string //minLength: 1 //maxLength: 200
-  body?: string //maxLength: 20000 //default: 
-  acceptanceCriteria?: Partial(string) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id?: string //pattern: ^c[1-9][0-9]*$
-     text: string //minLength: 1
-   })[] //maxItems: 50
-  // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
-  status?: enum[backlog, ready, in_progress, review, done] //default: backlog
-  // A story for a task, an epic for a story, null only for an epic.
-  parent?: string | null //pattern: ^[0-9a-fA-F-]{8,36}$ //default: null
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  dependsOn?: string[] //pattern: ^[0-9a-fA-F-]{8,36}$ //maxItems: 50
-  // Not accepted: refused with 400 whatever its value. See `WorkItem.tags`.
-  tags?: any
-}
-```
-
-### #/components/schemas/UpdatedItem
-
-```typescript
-#/components/schemas/WorkItemView & {
-   // Present only on the person's sign-off of an epic (closing it `completed`) whose assignment names an agent: what was done to that agent. The close stands whatever it says.
-   agent: {
-     // The agent's id in worker-service, from the assignment.
-     id: string //format: uuid
-     name: string
-     // `retired`: worker-service retired it now. `already_retired`: it was retired, or worker-service has no record of it, so nothing was retired. `refused`: worker-service would not retire it, in `said`.
-     outcome: enum[retired, already_retired, refused]
-     // The outcome in a line for the person, with worker-service's words when it refused.
-     said: string
+   "task": {
+      "id": "string",
+      "shortId": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ],
+      "subtasks": [ {
+         "id": "string",
+         "title": "string",
+         "description": "string",
+         "status": "backlog | in_progress | review | done | cancelled",
+         "dependsOn": [ "string" ],
+         "blockedBy": [ "string" ]
+      } ],
+      "criteria": [ {
+         "id": "string",
+         "text": "string",
+         "met": boolean,
+         "metBy": "string",
+         "metAt": "string"
+      } ],
+      "labels": [ "string" ],
+      "assignee": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "blockedBy": [ "string" ],
+      "ready": boolean
    }
- }
-```
-
-### #/components/schemas/AgentOutcome
-
-```typescript
-// Present only on the person's sign-off of an epic (closing it `completed`) whose assignment names an agent: what was done to that agent. The close stands whatever it says.
-{
-  // The agent's id in worker-service, from the assignment.
-  id: string //format: uuid
-  name: string
-  // `retired`: worker-service retired it now. `already_retired`: it was retired, or worker-service has no record of it, so nothing was retired. `refused`: worker-service would not retire it, in `said`.
-  outcome: enum[retired, already_retired, refused]
-  // The outcome in a line for the person, with worker-service's words when it refused.
-  said: string
 }
 ```
 
-### #/components/schemas/Patch
+### Response elements
 
-```typescript
+**task**  
+Type: [Task](#task) object.
+
+### Errors
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID.  
+HTTP status: 404
+
+**ConflictException**  
+The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## UpdateTask
+
+Changes the fields given. In `criteria` and `subtasks`, a field left out of an entry keeps its value as it stands when the write lands: to mark one criterion met, send `met: true` on that entry only. Cancelling a task cancels its open subtasks.
+
+### Request syntax
+
+```http
+PATCH /tasks/{taskId} HTTP/1.1
+Authorization: Bearer token
+x-actor: string
+Content-type: application/json
+
 {
-  type?: enum[epic, story, task]
-  title?: string //minLength: 1 //maxLength: 200
-  body?: string //maxLength: 20000
-  acceptanceCriteria?: Partial(string) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id?: string //pattern: ^c[1-9][0-9]*$
-     text: string //minLength: 1
-   })[] //maxItems: 50
-  met?: string[] //minLength: 1 //maxItems: 50
-  // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
-  status?: enum[backlog, ready, in_progress, review, done]
-  // Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`.
-  state?: enum[open, closed]
-  // Required with, and only with, `state: closed`.
-  closedReason?: enum[completed, not_planned]
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  parent?: string | null //pattern: ^[0-9a-fA-F-]{8,36}$
-  // An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.
-  dependsOn?: string[] //pattern: ^[0-9a-fA-F-]{8,36}$ //maxItems: 50
-  // The worker reviewing the item, as the reviewer's own name; null clears it.
-  reviewedBy?: string | null //minLength: 1 //maxLength: 200
-  // Move the item to `in_progress`, `review` or `done` though its `blockedBy` is not empty, recorded as the history entry's `overrode`. The person's alone: refused with 403 from a write that sends `claimed-by`, as every worker's does. Changes nothing on its own.
-  force?: enum[true]
-  // `true` queues the item to start on its own, at the back of the queue, or keeps its place if already queued; `false` takes it off. Only an open epic, story or task that reads `backlog` or `ready` can be queued, as this write leaves it: any other is refused with 400, naming why. Recorded in `history` as a change to `queuedAt`.
-  queued?: boolean
-  // Not accepted: refused with 400 whatever its value. See `WorkItem.tags`.
-  tags?: any
+   "title": "string",
+   "description": "string",
+   "status": "backlog | in_progress | review | done | cancelled",
+   "dependsOn": [ "string" ],
+   "subtasks": [ {
+      "id": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ]
+   } ],
+   "criteria": [ {
+      "id": "string",
+      "text": "string",
+      "met": boolean
+   } ],
+   "labels": [ "string" ],
+   "assignee": "string"
 }
 ```
 
-### #/components/schemas/HistoryEntry
+### URI request parameters
 
-```typescript
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
+
+### Request headers
+
+**x-actor**  
+Who is making the write, recorded in history in place of the token's name. For a token several callers share.  
+Type: String. Length: 0 to 200. Required: No.
+
+### Request body
+
+**title**  
+A short name for the task.  
+Type: String. Length: 1 to 200. Required: No.
+
+**description**  
+What the task is, in Markdown.  
+Type: String. Length: 0 to 20000. Required: No.
+
+**status**  
+Where it stands. `done` and `cancelled` are the closed statuses.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
+
+**dependsOn**  
+The IDs of the tasks this one waits on.  
+Type: Array of strings. At most 50 items. Required: No.
+
+**subtasks**  
+The steps of the work, in order. On update this is the whole list: a subtask left out is removed.  
+Type: Array of [SubtaskInput](#subtaskinput) objects. At most 50 items. Required: No.
+
+**criteria**  
+The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed.  
+Type: Array of [CriterionInput](#criterioninput) objects. At most 50 items. Required: No.
+
+**labels**  
+Labels, each by ID or name.  
+Type: Array of strings. At most 20 items. Required: No.
+
+**assignee**  
+Who the task is assigned to; null for no one.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  // The item written: this one, or one beneath it when the write was made.
-  item: string //format: uuid
-  action: enum[created, updated, deleted]
-  changes: {
-    // `met` is recorded as the ids of the criteria ticked.
-    field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
-    // Null on `created`.
-    from: Partial(string) & Partial(string[]) & Partial({
-       // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-       id: string //pattern: ^c[1-9][0-9]*$
-       text: string
-     }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
-    // Null on `deleted`.
-    to: Partial(string) & Partial(string[]) & Partial({
-       // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-       id: string //pattern: ^c[1-9][0-9]*$
-       text: string
-     }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
-  }[]
-  // When the service recorded it.
-  at: string
-  // The `claimed-by` header the write was sent with, unverified: callers sharing a token say who they are by it. Without one, the name of the write's token; null for an admin token's write that said nothing, the person's.
-  claimedBy: string | null
-  overrode: string[] //format: uuid
+   "task": {
+      "id": "string",
+      "shortId": "string",
+      "title": "string",
+      "description": "string",
+      "status": "backlog | in_progress | review | done | cancelled",
+      "dependsOn": [ "string" ],
+      "subtasks": [ {
+         "id": "string",
+         "title": "string",
+         "description": "string",
+         "status": "backlog | in_progress | review | done | cancelled",
+         "dependsOn": [ "string" ],
+         "blockedBy": [ "string" ]
+      } ],
+      "criteria": [ {
+         "id": "string",
+         "text": "string",
+         "met": boolean,
+         "metBy": "string",
+         "metAt": "string"
+      } ],
+      "labels": [ "string" ],
+      "assignee": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "blockedBy": [ "string" ],
+      "ready": boolean
+   }
 }
 ```
 
-### #/components/schemas/Change
+### Response elements
 
-```typescript
+**task**  
+Type: [Task](#task) object.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which. Also: a dependency cycle, among tasks or among its subtasks, or a criterion or subtask ID the task doesn't have.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID, or a task or label named in the body doesn't exist.  
+HTTP status: 404
+
+**ConflictException**  
+Moving the task, or a subtask, to `in_progress`, `review` or `done` while its `blockedBy` isn't empty; moving the task to `done` while a criterion is unmet (`unmetCriteria`) or a subtask is open (`openSubtasks`). Or: The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## DeleteTask
+
+Deletes a task no other task depends on. To close a task instead, set its status to `cancelled`.
+
+### Request syntax
+
+```http
+DELETE /tasks/{taskId} HTTP/1.1
+Authorization: Bearer token
+x-actor: string
+```
+
+### URI request parameters
+
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
+
+### Request headers
+
+**x-actor**  
+Who is making the write, recorded in history in place of the token's name. For a token several callers share.  
+Type: String. Length: 0 to 200. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 204
+```
+
+### Errors
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID.  
+HTTP status: 404
+
+**ConflictException**  
+Another task depends on it. Or: The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## ListTaskHistory
+
+Returns every write to the task, oldest first.
+
+### Request syntax
+
+```http
+GET /tasks/{taskId}/history?maxResults=maxResults&nextToken=nextToken HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
+
+### Query parameters
+
+**maxResults**  
+The most results to return. Default 100.  
+Type: Integer. Range: 1 to 500. Required: No.
+
+**nextToken**  
+The `nextToken` from the previous page.  
+Type: String. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  // `met` is recorded as the ids of the criteria ticked.
-  field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
-  // Null on `created`.
-  from: Partial(string) & Partial(string[]) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id: string //pattern: ^c[1-9][0-9]*$
-     text: string
-   }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
-  // Null on `deleted`.
-  to: Partial(string) & Partial(string[]) & Partial({
-     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
-     id: string //pattern: ^c[1-9][0-9]*$
-     text: string
-   }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+   "entries": [ {
+      "taskId": "string",
+      "action": "created | updated | deleted",
+      "changes": [ {
+         "field": "string",
+         "from": value,
+         "to": value
+      } ],
+      "actor": "string",
+      "at": "string"
+   } ],
+   "nextToken": "string"
 }
 ```
 
-### #/components/schemas/Comment
+### Response elements
 
-```typescript
+**entries**  
+The writes.  
+Type: Array of [HistoryEntry](#historyentry) objects.
+
+**nextToken**  
+The token for the next page, or null on the last.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID.  
+HTTP status: 404
+
+**ConflictException**  
+The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## ListComments
+
+Returns a task's comments, oldest first.
+
+### Request syntax
+
+```http
+GET /tasks/{taskId}/comments?maxResults=maxResults&nextToken=nextToken HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
+
+### Query parameters
+
+**maxResults**  
+The most results to return. Default 100.  
+Type: Integer. Range: 1 to 500. Required: No.
+
+**nextToken**  
+The `nextToken` from the previous page.  
+Type: String. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  id: string //format: uuid
-  // The item it was written on.
-  item: string //format: uuid
-  // The `claimed-by` header it was written with, unverified, as a history entry's `claimedBy`. Null when the writer said nothing, as a person writing from the page does.
-  author: string | null
-  // When the service recorded it.
-  at: string
-  // Markdown.
-  body: string //minLength: 1 //maxLength: 20000
+   "comments": [ {
+      "id": "string",
+      "taskId": "string",
+      "author": "string",
+      "body": "string",
+      "createdAt": "string"
+   } ],
+   "nextToken": "string"
 }
 ```
 
-### #/components/schemas/CommentDraft
+### Response elements
 
-```typescript
+**comments**  
+The comments.  
+Type: Array of [Comment](#comment) objects.
+
+**nextToken**  
+The token for the next page, or null on the last.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID.  
+HTTP status: 404
+
+**ConflictException**  
+The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## CreateComment
+
+Adds a comment to a task. A comment changes none of the task's fields.
+
+### Request syntax
+
+```http
+POST /tasks/{taskId}/comments HTTP/1.1
+Authorization: Bearer token
+x-actor: string
+Content-type: application/json
+
 {
-  // Markdown.
-  body: string //minLength: 1 //maxLength: 20000
+   "body": "string",
+   "clientToken": "string"
 }
 ```
 
-### #/components/schemas/WorkLogEntry
+### URI request parameters
 
-```typescript
-#/components/schemas/Comment & {
-   links: string[]
- }
-```
+**taskId**  
+The task's ID, or a prefix of it at least 8 characters long, such as its `shortId`.  
+Type: String. Minimum length: 8. Required: Yes.
 
-### #/components/schemas/WorkLogDraft
+### Request headers
 
-```typescript
+**x-actor**  
+Who is making the write, recorded in history in place of the token's name. For a token several callers share.  
+Type: String. Length: 0 to 200. Required: No.
+
+### Request body
+
+**body**  
+The comment, in Markdown.  
+Type: String. Length: 1 to 20000. Required: Yes.
+
+**clientToken**  
+A unique string you choose. Retrying a request with the same token returns what the first created, instead of creating another.  
+Type: String. Length: 1 to 64. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 201
+Content-type: application/json
+
 {
-  // What was done, in Markdown.
-  body: string //minLength: 1 //maxLength: 20000
-  links?: string[] //format: uri //maxLength: 2000 //maxItems: 20
+   "comment": {
+      "id": "string",
+      "taskId": "string",
+      "author": "string",
+      "body": "string",
+      "createdAt": "string"
+   }
 }
 ```
 
-### #/components/schemas/Assigned
+### Response elements
 
-```typescript
-#/components/schemas/Error & {
-   assignment: #/components/schemas/Assignment & 
- }
+**comment**  
+Type: [Comment](#comment) object.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No task has that ID.  
+HTTP status: 404
+
+**ConflictException**  
+The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
+
+---
+
+## ListLabels
+
+Returns labels by name.
+
+### Request syntax
+
+```http
+GET /labels?maxResults=maxResults&nextToken=nextToken HTTP/1.1
+Authorization: Bearer token
 ```
 
-### #/components/schemas/TaggedItemView
+### Query parameters
 
-```typescript
-#/components/schemas/WorkItemView & {
-   // How many items beneath this one the write changed.
-   reached: integer //minimum: 0
- }
-```
+**maxResults**  
+The most results to return. Default 100.  
+Type: Integer. Range: 1 to 500. Required: No.
 
-### #/components/schemas/ItemTag
+**nextToken**  
+The `nextToken` from the previous page.  
+Type: String. Required: No.
 
-```typescript
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  // A tag's id, or its value in any case.
-  tag: string //minLength: 1 //maxLength: 40
+   "labels": [ {
+      "id": "string",
+      "name": "string",
+      "color": "string",
+      "description": "string",
+      "createdAt": "string",
+      "updatedAt": "string"
+   } ],
+   "nextToken": "string"
 }
 ```
 
-### #/components/schemas/Criterion
+### Response elements
 
-```typescript
+**labels**  
+The labels.  
+Type: Array of [Label](#label) objects.
+
+**nextToken**  
+The token for the next page, or null on the last.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+---
+
+## CreateLabel
+
+Create a label.
+
+### Request syntax
+
+```http
+POST /labels HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  // The criterion's id, or its text when no other criterion of the item reads the same.
-  criterion: string //minLength: 1
+   "name": "string",
+   "color": "string",
+   "description": "string",
+   "clientToken": "string"
 }
 ```
 
-### #/components/schemas/Queue
+### Request body
 
-```typescript
+**name**  
+The label's name, unique ignoring case.  
+Type: String. Length: 1 to 40. Required: Yes.
+
+**color**  
+Its colour, as `#rrggbb`. Default `#808080`.  
+Type: String. Pattern: `^#[0-9a-fA-F]{6}$`. Required: No.
+
+**description**  
+What the label is for.  
+Type: String. Length: 0 to 500. Required: No.
+
+**clientToken**  
+A unique string you choose. Retrying a request with the same token returns what the first created, instead of creating another.  
+Type: String. Length: 1 to 64. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 201
+Content-type: application/json
+
 {
-  // How many queued items the dispatcher keeps running at once; 1 until the person sets it.
-  limit: integer //minimum: 1 //maximum: 10
-  running: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // The agent the queue's request started.
-    agent: {
-      // The agent's id in worker-service, which is its request's.
-      id: string //format: uuid
-      name: string
-      // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
-      state: enum[idle, working, waiting, interrupted, retired, unknown]
-    }
-    // When the queue requested it: its assignment's `at`.
-    startedAt: string
-  }[]
-  queued: {
-    item: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }
-    // Its `queuePosition`; null once `requested`, when it has left the queue's order.
-    position: integer | null
-    // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
-    state: enum[next, blocked, requested]
-    blockedBy: {
-      id: string //format: uuid
-      shortId: string
-      title: string
-      status: enum[backlog, ready, in_progress, review, done]
-    }[]
-    // While `requested`, once the request is recorded; null otherwise.
-    request: {
-      id: string //format: uuid
-      // The name its agent will have.
-      name: string
-      // Why it has not started, in worker-service's words.
-      why: string
-    }
-  }[]
-  // The dispatcher's last run; null before its first.
-  last: {
-    // When the dispatcher's last run ended.
-    at: string
-    requested: {
-      item: string //format: uuid
-      shortId: string
-      request: string //format: uuid
-      // The name of the agent the request starts.
-      worker: string
-      state: enum[waiting, started, withdrawn]
-      // While `waiting`, why, in worker-service's words.
-      why: string | null
-    }[]
-    why: string[]
-  }
+   "label": {
+      "id": "string",
+      "name": "string",
+      "color": "string",
+      "description": "string",
+      "createdAt": "string",
+      "updatedAt": "string"
+   }
 }
 ```
 
-### #/components/schemas/QueueRunning
+### Response elements
 
-```typescript
+**label**  
+Type: [Label](#label) object.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ConflictException**  
+Another label has that name.  
+HTTP status: 409
+
+---
+
+## GetLabel
+
+Get a label.
+
+### Request syntax
+
+```http
+GET /labels/{labelId} HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**labelId**  
+The label's ID or name.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  item: {
-    id: string //format: uuid
-    shortId: string
-    title: string
-    status: enum[backlog, ready, in_progress, review, done]
-  }
-  // The agent the queue's request started.
-  agent: {
-    // The agent's id in worker-service, which is its request's.
-    id: string //format: uuid
-    name: string
-    // As worker-service last said; `unknown` when it could not be asked, which still holds the place.
-    state: enum[idle, working, waiting, interrupted, retired, unknown]
-  }
-  // When the queue requested it: its assignment's `at`.
-  startedAt: string
+   "label": {
+      "id": "string",
+      "name": "string",
+      "color": "string",
+      "description": "string",
+      "createdAt": "string",
+      "updatedAt": "string"
+   }
 }
 ```
 
-### #/components/schemas/QueueItem
+### Response elements
 
-```typescript
+**label**  
+Type: [Label](#label) object.
+
+### Errors
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No label has that ID or name.  
+HTTP status: 404
+
+---
+
+## UpdateLabel
+
+Changes the fields given.
+
+### Request syntax
+
+```http
+PATCH /labels/{labelId} HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  id: string //format: uuid
-  shortId: string
-  title: string
-  status: enum[backlog, ready, in_progress, review, done]
+   "name": "string",
+   "color": "string",
+   "description": "string"
 }
 ```
 
-### #/components/schemas/Queued
+### URI request parameters
 
-```typescript
+**labelId**  
+The label's ID or name.  
+Type: String. Required: Yes.
+
+### Request body
+
+**name**  
+The label's name, unique ignoring case.  
+Type: String. Length: 1 to 40. Required: No.
+
+**color**  
+Its colour, as `#rrggbb`. Default `#808080`.  
+Type: String. Pattern: `^#[0-9a-fA-F]{6}$`. Required: No.
+
+**description**  
+What the label is for.  
+Type: String. Length: 0 to 500. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  item: {
-    id: string //format: uuid
-    shortId: string
-    title: string
-    status: enum[backlog, ready, in_progress, review, done]
-  }
-  // Its `queuePosition`; null once `requested`, when it has left the queue's order.
-  position: integer | null
-  // `next`: it starts, in `position` order, once a running place is free. `blocked`: it waits on `blockedBy` and keeps its place. `requested`: the queue asked worker-service for its agent, and the request still waits to be admitted, holding a running place.
-  state: enum[next, blocked, requested]
-  blockedBy: {
-    id: string //format: uuid
-    shortId: string
-    title: string
-    status: enum[backlog, ready, in_progress, review, done]
-  }[]
-  // While `requested`, once the request is recorded; null otherwise.
-  request: {
-    id: string //format: uuid
-    // The name its agent will have.
-    name: string
-    // Why it has not started, in worker-service's words.
-    why: string
-  }
+   "label": {
+      "id": "string",
+      "name": "string",
+      "color": "string",
+      "description": "string",
+      "createdAt": "string",
+      "updatedAt": "string"
+   }
 }
 ```
 
-### #/components/schemas/LastRun
+### Response elements
 
-```typescript
-// The dispatcher's last run; null before its first.
+**label**  
+Type: [Label](#label) object.
+
+### Errors
+
+**ValidationException**  
+A field is missing, malformed or out of bounds; `message` says which.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No label has that ID or name.  
+HTTP status: 404
+
+**ConflictException**  
+Another label has that name.  
+HTTP status: 409
+
+---
+
+## DeleteLabel
+
+Deletes a label and removes it from every task that has it.
+
+### Request syntax
+
+```http
+DELETE /labels/{labelId} HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**labelId**  
+The label's ID or name.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 204
+```
+
+### Errors
+
+**UnauthorizedException**  
+The `Authorization` header is missing, or its token isn't one this service issued.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No label has that ID or name.  
+HTTP status: 404
+
+---
+
+## GetHealth
+
+Reports that the service is up, and which build it runs. Needs no token.
+
+### Request syntax
+
+```http
+GET /health HTTP/1.1
+```
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  // When the dispatcher's last run ended.
-  at: string
-  requested: {
-    item: string //format: uuid
-    shortId: string
-    request: string //format: uuid
-    // The name of the agent the request starts.
-    worker: string
-    state: enum[waiting, started, withdrawn]
-    // While `waiting`, why, in worker-service's words.
-    why: string | null
-  }[]
-  why: string[]
+   "ok": "true",
+   "version": "string",
+   "commit": "string"
 }
 ```
 
-### #/components/schemas/QueuePatch
+### Response elements
 
-```typescript
-{
-  // From 1 to 10.
-  limit: integer //minimum: 1 //maximum: 10
-}
-```
+**ok**  
+Always true: an answer means the service is up.  
+Type: Boolean.
 
-### #/components/schemas/Tag
+**version**  
+The package version.  
+Type: String.
 
-```typescript
-{
-  id: string //format: uuid
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description: string //maxLength: 500
-  createdAt: string
-  updatedAt: string
-}
-```
+**commit**  
+The git commit it was built from.  
+Type: String.
 
-### #/components/schemas/TagTaken
+---
 
-```typescript
-#/components/schemas/Error & {
-   // The tag that already has the value.
-   tag: string //format: uuid
- }
-```
+# Data types
 
-### #/components/schemas/TagDraft
+## Task
 
-```typescript
-{
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description?: string //maxLength: 500 //default: 
-}
-```
+### Contents
 
-### #/components/schemas/TagPatch
+**id**  
+The task's ID, a UUID.  
+Type: String. Required: Yes.
 
-```typescript
-{
-  // The text shown on the chip. Unique among tags case-insensitively.
-  value?: string //minLength: 1 //maxLength: 40
-  // The chip's background, `#rrggbb`, stored as given.
-  color?: string //pattern: ^#[0-9a-fA-F]{6}$
-  // What the tag is for, shown when hovering its chip.
-  description?: string //maxLength: 500
-}
-```
+**shortId**  
+The shortest prefix of `id`, at least 8 characters, that no other task's ID starts with. Accepted wherever an ID is.  
+Type: String. Required: Yes.
+
+**title**  
+A short name for the task.  
+Type: String. Required: Yes.
+
+**description**  
+What the task is, in Markdown.  
+Type: String. Required: Yes.
+
+**status**  
+Where it stands. `done` and `cancelled` are the closed statuses.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: Yes.
+
+**dependsOn**  
+The IDs of the tasks this one waits on.  
+Type: Array of strings. Required: Yes.
+
+**subtasks**  
+The steps of the work, in order. The task can't be `done` until each is closed.  
+Type: Array of [Subtask](#subtask) objects. Required: Yes.
+
+**criteria**  
+The acceptance criteria, in order. The task can't be `done` until each is met.  
+Type: Array of [Criterion](#criterion) objects. Required: Yes.
+
+**labels**  
+The IDs of its labels.  
+Type: Array of strings. Required: Yes.
+
+**assignee**  
+Who the task is assigned to, as free text; null if no one.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**createdAt**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+**updatedAt**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+**blockedBy**  
+The tasks in `dependsOn` that aren't closed yet.  
+Type: Array of strings. Required: Yes.
+
+**ready**  
+Whether it can be started now: in `backlog`, with nothing in `blockedBy`.  
+Type: Boolean. Required: Yes.
+
+## Subtask
+
+### Contents
+
+**id**  
+The subtask's ID within its task: `s1`, `s2`, and so on. Kept for as long as the subtask is.  
+Type: String. Required: Yes.
+
+**title**  
+A short name for the step.  
+Type: String. Required: Yes.
+
+**description**  
+What the step is, in Markdown.  
+Type: String. Required: Yes.
+
+**status**  
+Where it stands. `done` and `cancelled` are the closed statuses.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: Yes.
+
+**dependsOn**  
+The IDs of the subtasks of the same task this one waits on.  
+Type: Array of strings. Required: Yes.
+
+**blockedBy**  
+The subtasks in `dependsOn` that aren't closed yet.  
+Type: Array of strings. Required: Yes.
+
+## Criterion
+
+### Contents
+
+**id**  
+The criterion's ID within its task: `c1`, `c2`, and so on. Kept for as long as the criterion is.  
+Type: String. Required: Yes.
+
+**text**  
+What must be true.  
+Type: String. Required: Yes.
+
+**met**  
+Whether it has been marked met.  
+Type: Boolean. Required: Yes.
+
+**metBy**  
+Who marked it met; null while it isn't.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**metAt**  
+When it was marked met; null while it isn't.  
+Type: String. Nullable: Yes. Required: Yes.
+
+## Error
+
+### Contents
+
+**code**  
+What kind of error it is.  
+Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `ResourceNotFoundException` | `ConflictException` | `InternalServerException`. Required: Yes.
+
+**message**  
+What went wrong.  
+Type: String. Required: Yes.
+
+**blockedBy**  
+The open tasks, or subtasks, it waits on.  
+Type: Array of strings. Required: No.
+
+**unmetCriteria**  
+The criteria not yet met.  
+Type: Array of strings. Required: No.
+
+**openSubtasks**  
+The IDs of the subtasks not yet closed.  
+Type: Array of strings. Required: No.
+
+**matches**  
+The task IDs a short ID matches.  
+Type: Array of strings. Required: No.
+
+## SubtaskInput
+
+### Contents
+
+**id**  
+The ID of an existing subtask. Omit it for a new one.  
+Type: String. Required: No.
+
+**title**  
+A short name for the step. Required for a new subtask.  
+Type: String. Length: 1 to 200. Required: No.
+
+**description**  
+What the step is, in Markdown.  
+Type: String. Length: 0 to 20000. Required: No.
+
+**status**  
+Where the step stands. Omit it to leave it as it stands when the write lands; a new subtask starts in `backlog`.  
+Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
+
+**dependsOn**  
+The IDs of subtasks of the same task this one waits on.  
+Type: Array of strings. At most 50 items. Required: No.
+
+## CriterionInput
+
+### Contents
+
+**id**  
+The ID of an existing criterion. Omit it for a new one.  
+Type: String. Required: No.
+
+**text**  
+What must be true. Required for a new criterion.  
+Type: String. Length: 1 to 500. Required: No.
+
+**met**  
+Whether it is met. Omit it to leave it as it stands when the write lands.  
+Type: Boolean. Required: No.
+
+## HistoryEntry
+
+### Contents
+
+**taskId**  
+The task written.  
+Type: String. Required: Yes.
+
+**action**  
+What the write did.  
+Type: String. Valid values: `created` | `updated` | `deleted`. Required: Yes.
+
+**changes**  
+Each field the write changed.  
+Type: Array of Object. Required: Yes.
+
+**actor**  
+Who made the write: its `x-actor` header, else the name of its token. Null for an admin token that named no one.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**at**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+## Comment
+
+### Contents
+
+**id**  
+The comment's ID.  
+Type: String. Required: Yes.
+
+**taskId**  
+The task it is on.  
+Type: String. Required: Yes.
+
+**author**  
+Who wrote it: its `x-actor` header, else the name of its token.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**body**  
+The comment, in Markdown.  
+Type: String. Required: Yes.
+
+**createdAt**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+## Label
+
+### Contents
+
+**id**  
+The label's ID.  
+Type: String. Required: Yes.
+
+**name**  
+The label's name, unique ignoring case.  
+Type: String. Required: Yes.
+
+**color**  
+Its colour, as `#rrggbb`.  
+Type: String. Required: Yes.
+
+**description**  
+What the label is for.  
+Type: String. Required: Yes.
+
+**createdAt**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+**updatedAt**  
+When, as an ISO 8601 date and time in UTC.  
+Type: String. Required: Yes.
+
+## Health
+
+### Contents
+
+**ok**  
+Always true: an answer means the service is up.  
+Type: Boolean. Required: Yes.
+
+**version**  
+The package version.  
+Type: String. Required: Yes.
+
+**commit**  
+The git commit it was built from.  
+Type: String. Required: Yes.
+

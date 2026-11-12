@@ -3,4 +3,4 @@
 # carry a stale copy. The drift test is the backstop for `--no-verify`.
 set -e
 npm run spec --silent
-git add openapi.json mcp.json docs/ skill/reference/api.md
+git add openapi.json mcp.json docs/

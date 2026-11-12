@@ -1,7 +1,7 @@
 import { singleToken } from "./auth.ts";
-import { WorkTrackerApi } from "./api.ts";
+import { WaypointApi } from "./api.ts";
 import { INSTRUCTIONS } from "./mcp.ts";
-import { WorkItemStore } from "./store.ts";
+import { Store } from "./store.ts";
 
 interface JsonSchema {
   type?: string | string[];
@@ -25,7 +25,7 @@ export interface McpTool {
 
 /** The MCP server's tools, listed through the app as a client would, so the file cannot differ from what is served. */
 export async function mcpDocument(): Promise<{ instructions: string; tools: McpTool[] }> {
-  const api = new WorkTrackerApi(WorkItemStore.open(":memory:"), singleToken("spec"));
+  const api = new WaypointApi(Store.open(":memory:"), singleToken("spec"));
   const res = await api.fetch(
     new Request("http://local/mcp", {
       method: "POST",
@@ -65,7 +65,7 @@ export function renderMcp(doc: { instructions: string; tools: McpTool[] }): stri
     "<!-- Generated from src/mcp.ts by `npm run spec`; do not edit. -->",
     "",
     "Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes a bearer token, as the API does,",
-    "and may send `claimed-by`: each tool is one API request made with them, so it is refused, recorded and",
+    "and may send `x-actor`: each tool is one API request made with them, so it is refused, recorded and",
     "answered as that request would be. A refusal comes back as the tool's error, with the API's status and words.",
     "",
     "```json",
@@ -132,7 +132,7 @@ blockquote{white-space:pre-wrap;margin:0}table{border-collapse:collapse;width:10
 .ro{font-size:11px;border:1px solid #1e7a3a;color:#1e7a3a;border-radius:4px;padding:0 6px;font-weight:normal}section{border-top:1px solid #e3e2dc;padding-top:6px}
 </style></head><body>
 <h1>waypoint's MCP server</h1>
-<p>Streamable HTTP at <code>/mcp</code>, stateless, answering JSON. Every request takes a bearer token, as the API does, and may send <code>claimed-by</code>: each tool is one API request made with them, so it is refused, recorded and answered as that request would be. A refusal comes back as the tool's error, with the API's status and words. The contract is <a href="../mcp.json"><code>mcp.json</code></a>; the API's is <a href="./api">here</a>.</p>
+<p>Streamable HTTP at <code>/mcp</code>, stateless, answering JSON. Every request takes a bearer token, as the API does, and may send <code>x-actor</code>: each tool is one API request made with them, so it is refused, recorded and answered as that request would be. A refusal comes back as the tool's error, with the API's status and words. The contract is <a href="../mcp.json"><code>mcp.json</code></a>; the API's is <a href="./api">here</a>.</p>
 <pre>${config}</pre>
 <h2>Instructions</h2><p>What the server tells an agent when it connects:</p><blockquote>${esc(doc.instructions)}</blockquote>
 <h2>Tools</h2><ul>${index}</ul>

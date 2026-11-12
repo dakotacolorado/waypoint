@@ -31,10 +31,6 @@ Run each on its own and read its exit status (`echo $?`). Never pipe one into
 `tail` or `head`: the pipe reports their status, so a failure reads as a pass.
 
 `npm test` needs no network and no service: the store runs on SQLite in
-memory, and `src/cli.spec.ts` starts the server on ports the OS picks and runs
-the `wt` it serves, which needs `curl`. It
-skips `src/integration.spec.ts` (6 tests), which writes to a running server
-given `INTEGRATION_WT_URL` and `INTEGRATION_WT_TOKEN`; never point those at
-prod.
+memory, and `src/cli.spec.ts` starts the server on ports the OS picks.
 
 Installing points git at `.githooks/`, whose pre-commit runs `npm run spec`.

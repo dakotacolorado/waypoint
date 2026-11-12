@@ -3,123 +3,58 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Tokens } from "./auth.ts";
-import type { Draft } from "./domain.ts";
 import { FakeStore } from "./fake-store.ts";
-import { ConflictError, WorkItemStore } from "./store.ts";
-
-const draft = (over: Partial<Draft> = {}): Draft => ({
-  type: "epic",
-  title: "E",
-  body: "",
-  acceptanceCriteria: [],
-  status: "backlog",
-  parent: null,
-  dependsOn: [],
-  ...over,
-});
+import { Store } from "./store.ts";
 
 let dir: string;
 beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "waypoint-"))));
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-describe("WorkItemStore on a file", () => {
-  it("keeps items, tags, history, notes, the queue and tokens across a restart", async () => {
+describe("Store on a file", () => {
+  it("keeps tasks, labels, history, comments and tokens across a restart", async () => {
     const path = join(dir, "w.db");
-    const first = WorkItemStore.open(path);
-    const epic = await first.create(draft());
-    const story = await first.create(draft({ type: "story", title: "S", parent: epic.id }));
-    const tag = await first.createTag({ value: "ui", color: "#123456", description: "" });
-    await first.tagItem(epic.id, "ui");
-    await first.addNote({ id: "n1", item: story.id, kind: "work", author: "w", at: new Date().toISOString(), body: "did it", links: [] });
-    await first.setQueueLimit(3, null);
-    const token = new Tokens(first.db).create("worker", false);
+    const first = Store.open(path);
+    await first.createLabel({ name: "ui" });
+    const task = await first.createTask({ title: "kept", labels: ["ui"], subtasks: [{ title: "step" }] }, "planner");
+    await first.createComment(task.id, "noted", "agent-1");
+    const token = new Tokens(first.db).create("fleet", false);
     first.db.close();
 
-    const second = WorkItemStore.open(path);
-    const graph = await second.graph();
-    expect(graph.get(story.id)).toMatchObject({ title: "S", parent: epic.id, tags: [tag.id] });
-    expect((await second.history(story.id))!.map((entry) => entry.action)).toEqual(["created", "updated"]);
-    expect((await second.notes(story.id, "work"))!.map((note) => note.body)).toEqual(["did it"]);
-    expect((await second.queueSettings()).limit).toBe(3);
-    expect(new Tokens(second.db).caller(token)).toEqual({ name: "worker", admin: false });
+    const second = Store.open(path);
+    expect((await second.tasks()).get(task.id)).toMatchObject({ title: "kept", subtasks: [{ id: "s1", title: "step" }] });
+    expect((await second.labels()).find("ui").name).toBe("ui");
+    expect((await second.history(task.id)).map((entry) => entry.action)).toEqual(["created"]);
+    expect((await second.comments(task.id)).map((comment) => comment.body)).toEqual(["noted"]);
+    expect(new Tokens(second.db).caller(token)).toEqual({ name: "fleet", admin: false });
     second.db.close();
   });
-});
 
-describe("WorkItemStore.backup", () => {
-  it("copies the database to a file another store opens with the same items", async () => {
-    const store = WorkItemStore.open(join(dir, "live.db"));
-    const epic = await store.create(draft({ title: "kept in the copy" }));
-    await store.backup(join(dir, "copy.db"));
-    await store.update(epic.id, { title: "changed after" });
-    const copy = WorkItemStore.open(join(dir, "copy.db"));
-    expect((await copy.graph()).get(epic.id)!.title).toBe("kept in the copy");
+  it("backs up to a file another store opens with the same tasks, never leaving a partial copy", async () => {
+    const live = Store.open(join(dir, "live.db"));
+    const task = await live.createTask({ title: "in the copy" }, null);
+    await live.backup(join(dir, "copy.db"));
+    await live.updateTask(task.id, { title: "after" }, null);
+    const copy = Store.open(join(dir, "copy.db"));
+    expect((await copy.tasks()).get(task.id)!.title).toBe("in the copy");
     expect(existsSync(join(dir, "copy.db.partial"))).toBe(false);
     copy.db.close();
-    store.db.close();
+    live.db.close();
   });
 });
 
-describe("WorkItemStore's writes", () => {
-  it("decides again from a fresh read when another write lands between its read and its commit", async () => {
-    const store = new FakeStore();
-    const epic = await store.create(draft());
-    const { read, release } = store.holdNextRead();
-    const slow = store.update(epic.id, { title: "slow" });
-    await read;
-    await store.update(epic.id, { body: "landed first" });
-    release();
-    expect(await slow).toMatchObject({ title: "slow", body: "landed first" });
-  });
-
-  it("gives up with ConflictError when no read stays current, writing nothing", async () => {
-    const store = new FakeStore();
-    const epic = await store.create(draft());
-    store.version = Number.NaN;
-    await expect(store.update(epic.id, { title: "never" })).rejects.toBeInstanceOf(ConflictError);
-    expect(store.items[0]!.title).toBe("E");
-  });
-
+describe("Store's writes", () => {
   it("rolls back every part of a write that fails part way", async () => {
     const store = new FakeStore();
-    const epic = await store.create(draft());
-    store.db.exec("CREATE TRIGGER refuse BEFORE INSERT ON history BEGIN SELECT RAISE(ABORT, 'refused'); END");
-    await expect(store.update(epic.id, { title: "half" })).rejects.toThrow("refused");
-    expect(store.items[0]!.title).toBe("E");
-    store.db.exec("DROP TRIGGER refuse");
-    expect(await store.update(epic.id, { title: "whole" })).toMatchObject({ title: "whole" });
+    const task = await store.createTask({ title: "before" }, null);
+    store.db.exec("CREATE TRIGGER refuse BEFORE INSERT ON task_history BEGIN SELECT RAISE(ABORT, 'refused'); END");
+    await expect(store.updateTask(task.id, { title: "half" }, null)).rejects.toThrow("refused");
+    expect((await store.tasks()).get(task.id)!.title).toBe("before");
   });
 
-  it("files a write beneath an item under it and every item above", async () => {
+  it("records nothing for an update that changes nothing", async () => {
     const store = new FakeStore();
-    const epic = await store.create(draft());
-    const story = await store.create(draft({ type: "story", title: "S", parent: epic.id }));
-    const task = await store.create(draft({ type: "task", title: "T", parent: story.id }));
-    await store.createTag({ value: "ui", color: "#123456", description: "" });
-    await store.tagItem(story.id, "ui");
-    const tagged = (entries: { item: string; action: string }[]) => entries.filter((entry) => entry.action === "updated").map((entry) => entry.item);
-    expect(tagged((await store.history(task.id))!)).toEqual([task.id]);
-    expect(tagged((await store.history(story.id))!)).toEqual([story.id, task.id]);
-    expect(tagged((await store.history(epic.id))!)).toEqual([story.id, task.id]);
-  });
-});
-
-describe("a record written before criteria had ids", () => {
-  it("reads its texts as c1, c2, … and moves each tick by text onto one criterion, so twins are not all ticked", () => {
-    const item = WorkItemStore.itemFromRecord({
-      id: "11111111-1111-4111-8111-111111111111",
-      title: "old",
-      acceptanceCriteria: ["same", "same", "other"],
-      met: [{ criterion: "same", by: "a", at: "2026-01-01T00:00:00.000Z" }],
-      status: "backlog",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-    expect(item.acceptanceCriteria).toEqual([
-      { id: "c1", text: "same" },
-      { id: "c2", text: "same" },
-      { id: "c3", text: "other" },
-    ]);
-    expect(item.met).toEqual([{ criterion: "c1", by: "a", at: "2026-01-01T00:00:00.000Z" }]);
+    const task = await store.createTask({ title: "same" }, null);
+    await store.updateTask(task.id, { title: "same" }, null);
+    expect(await store.history(task.id)).toHaveLength(1);
   });
 });

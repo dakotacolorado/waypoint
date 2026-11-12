@@ -1,31 +1,37 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "@hono/zod-openapi";
-import { DraftSchema, PatchSchema, Status, State, TagDraftSchema, TagPatchSchema, Type } from "./schema.ts";
+import { LabelFieldsInput, Status, TaskFieldsInput } from "./schema.ts";
 
-export const INSTRUCTIONS = `waypoint tracks work as epics, stories and tasks. An epic has no parent, every story has an epic, every task has a story.
+export const INSTRUCTIONS = `waypoint is a task tracker with dependency and status management.
 
-- A parent's status is derived from its open children: move the children, never the parent.
-- Dependencies are between siblings only. An item moves to in_progress, review or done only once blockedBy is empty.
-- Close an item (update_item with state closed and a closedReason) rather than delete it.
-- Say what you did on an item with add_work_log; talk to people about it with add_comment.
-- Every tool takes an id as the full id or a prefix of at least 8 characters, such as its shortId.`;
+- status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.
+- A task is ready when it is in backlog and every task it depends on is closed.
+- A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.
+- In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.
+- A task ID may be given as its shortId.`;
 
-/** Sends one API request, as the MCP request's caller, and gives its status and JSON. */
+/** Sends one API request as the MCP request's caller, and gives its status and JSON. */
 export type Call = (method: string, path: string, body?: unknown) => Promise<{ status: number; body: unknown }>;
 
-const Ref = z.string().min(8).describe("The item's id, or a prefix of it at least 8 characters long, such as its shortId.");
+const TaskId = z.string().min(8).describe("The task's ID, or a prefix of it at least 8 characters long, such as its shortId.");
+const LabelId = z.string().min(1).describe("The label's ID or name.");
+const Paging = {
+  maxResults: z.number().int().min(1).max(500).optional().describe("The most results to return. Default 100."),
+  nextToken: z.string().optional().describe("The nextToken from the previous page."),
+};
+const ClientToken = z.string().min(1).max(64).optional().describe("A unique string; retrying with it returns what the first request created.");
 
-const query = (params: Record<string, string | boolean | undefined>) => {
-  const set = Object.entries(params).filter((entry): entry is [string, string | boolean] => entry[1] !== undefined);
+const query = (params: Record<string, string | number | undefined>) => {
+  const set = Object.entries(params).filter((entry): entry is [string, string | number] => entry[1] !== undefined);
   return set.length ? `?${new URLSearchParams(set.map(([key, value]): [string, string] => [key, String(value)]))}` : "";
 };
-
-const at = (id: string) => encodeURIComponent(id);
+const at = encodeURIComponent;
 
 /**
- * The MCP server for one request. Each tool is one API request made with the
- * caller's own token and `claimed-by`, so it is refused, recorded and answered
- * exactly as that request would be: an API error comes back as the tool's error.
+ * The MCP server for one request. Each tool is one API operation, named the
+ * same in snake_case, made with the caller's own token and `x-actor`, so it
+ * is refused and recorded exactly as that request would be; an API error is
+ * the tool's error.
  */
 export function mcpServer(version: string, call: Call): McpServer {
   const server = new McpServer({ name: "waypoint", version }, { instructions: INSTRUCTIONS });
@@ -40,7 +46,7 @@ export function mcpServer(version: string, call: Call): McpServer {
   ) => {
     server.registerTool(
       name,
-      { title, description, inputSchema, annotations: { readOnlyHint: readOnly, destructiveHint: name === "delete_item" } },
+      { title, description, inputSchema, annotations: { readOnlyHint: readOnly, destructiveHint: name.startsWith("delete_") } },
       // The SDK types a tool's input by its own zod; these are the API's schemas, which it validates the same.
       (async (input: z.infer<z.ZodObject<Shape>>) => {
         const [method, path, body] = request(input);
@@ -52,116 +58,99 @@ export function mcpServer(version: string, call: Call): McpServer {
   };
 
   tool(
-    "list_items",
-    "List items",
-    "Items matching every filter given, as GET /items. With no filter, every item, open and closed.",
+    "list_tasks",
+    "List tasks",
+    "Returns tasks matching every filter given, oldest first. Cancelled tasks are left out unless status is cancelled or includeCancelled is true.",
     {
-      status: Status.optional(),
-      state: State.optional().describe("`open` for only what still needs looking at."),
-      type: Type.optional(),
-      parent: Ref.optional().describe("Only the children of this item."),
-      heldBy: z.string().optional().describe("Only items held by this name."),
-      tag: z.string().optional().describe("Only items carrying this tag, by id or value."),
-      queued: z.boolean().optional().describe("true: only queued items, in queue order."),
+      status: Status.optional().describe("Only tasks with this status."),
+      ready: z.boolean().optional().describe("true for only tasks that can be started now."),
+      label: z.string().optional().describe("Only tasks with this label, by ID or name."),
+      assignee: z.string().optional().describe("Only tasks assigned to this; none for unassigned tasks."),
+      includeCancelled: z.boolean().optional(),
+      ...Paging,
     },
-    ({ queued, ...filters }) => ["GET", `/items${query({ ...filters, queued })}`],
+    ({ ready, includeCancelled, ...rest }) => ["GET", `/tasks${query({ ...rest, ready: ready?.toString(), includeCancelled: includeCancelled?.toString() })}`],
     true,
   );
 
-  tool("get_item", "Get an item", "One item, with its derived status, blockedBy and children, as GET /items/{id}.", { id: Ref }, ({ id }) => ["GET", `/items/${at(id)}`], true);
+  tool(
+    "create_task",
+    "Create a task",
+    "Creates a task in backlog, unless status says otherwise.",
+    { ...TaskFieldsInput.required({ title: true }).shape, clientToken: ClientToken },
+    (input) => ["POST", "/tasks", input],
+  );
+
+  tool("get_task", "Get a task", "Returns a task.", { taskId: TaskId }, ({ taskId }) => ["GET", `/tasks/${at(taskId)}`], true);
 
   tool(
-    "create_item",
-    "Create an item",
-    "Creates an epic, story or task, as POST /items. A story needs an epic as parent, a task a story; an epic has none.",
-    DraftSchema.omit({ tags: true }).shape,
-    (draft) => ["POST", "/items", draft],
+    "update_task",
+    "Update a task",
+    "Changes the fields given. Cancelling a task cancels its open subtasks.",
+    { taskId: TaskId, ...TaskFieldsInput.shape },
+    ({ taskId, ...fields }) => ["PATCH", `/tasks/${at(taskId)}`, fields],
   );
 
   tool(
-    "update_item",
-    "Update an item",
-    "Changes the fields given in `changes`, as PATCH /items/{id}: status, title, body, criteria, parent, dependencies, queued; close it with state closed and a closedReason.",
-    { id: Ref, changes: PatchSchema },
-    ({ id, changes }) => ["PATCH", `/items/${at(id)}`, changes],
-  );
-
-  tool("delete_item", "Delete an item", "Deletes an item no other item names, as DELETE /items/{id}. Prefer closing it.", { id: Ref }, ({ id }) => ["DELETE", `/items/${at(id)}`]);
-
-  tool("item_history", "An item's history", "Every write to the item and beneath it, oldest first, as GET /items/{id}/history.", { id: Ref }, ({ id }) => ["GET", `/items/${at(id)}/history`], true);
-
-  tool("list_comments", "An item's comments", "What people and agents said about the item, oldest first, as GET /items/{id}/comments.", { id: Ref }, ({ id }) => ["GET", `/items/${at(id)}/comments`], true);
-
-  tool(
-    "add_comment",
-    "Comment on an item",
-    "Adds a comment to the item, as POST /items/{id}/comments.",
-    { id: Ref, body: z.string().min(1).describe("Markdown.") },
-    ({ id, body }) => ["POST", `/items/${at(id)}/comments`, { body }],
-  );
-
-  tool("list_work_log", "An item's work log", "What was done on the item, oldest first, as GET /items/{id}/work-log.", { id: Ref }, ({ id }) => ["GET", `/items/${at(id)}/work-log`], true);
-
-  tool(
-    "add_work_log",
-    "Log work on an item",
-    "Records what was done on the item, with links to what it made, as POST /items/{id}/work-log.",
-    { id: Ref, body: z.string().min(1).describe("Markdown."), links: z.array(z.string().url()).optional() },
-    ({ id, body, links }) => ["POST", `/items/${at(id)}/work-log`, { body, links: links ?? [] }],
+    "delete_task",
+    "Delete a task",
+    "Deletes a task no other task depends on. To close a task instead, set its status to cancelled.",
+    { taskId: TaskId },
+    ({ taskId }) => ["DELETE", `/tasks/${at(taskId)}`],
   );
 
   tool(
-    "tick_criterion",
-    "Tick a criterion",
-    "Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.",
-    { id: Ref, criterion: z.string().min(1).describe("The criterion's id, as `c2`, or its text when unique.") },
-    ({ id, criterion }) => ["POST", `/items/${at(id)}/met`, { criterion }],
+    "list_task_history",
+    "List a task's history",
+    "Returns every write to the task, oldest first.",
+    { taskId: TaskId, ...Paging },
+    ({ taskId, ...paging }) => ["GET", `/tasks/${at(taskId)}/history${query(paging)}`],
+    true,
   );
 
   tool(
-    "untick_criterion",
-    "Untick a criterion",
-    "Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.",
-    { id: Ref, criterion: z.string().min(1).describe("The criterion's id, as `c2`, or its text when unique.") },
-    ({ id, criterion }) => ["DELETE", `/items/${at(id)}/met`, { criterion }],
-  );
-
-  tool("list_tags", "List tags", "Every tag: its value, colour and description, as GET /tags.", {}, () => ["GET", "/tags"], true);
-
-  tool("create_tag", "Create a tag", "Adds a tag to the shared list, as POST /tags.", TagDraftSchema.shape, (draft) => ["POST", "/tags", draft]);
-
-  tool(
-    "update_tag",
-    "Update a tag",
-    "Changes a tag's value, colour or description, as PATCH /tags/{id}.",
-    { id: z.string().describe("The tag's id."), changes: TagPatchSchema },
-    ({ id, changes }) => ["PATCH", `/tags/${at(id)}`, changes],
+    "list_comments",
+    "List comments",
+    "Returns a task's comments, oldest first.",
+    { taskId: TaskId, ...Paging },
+    ({ taskId, ...paging }) => ["GET", `/tasks/${at(taskId)}/comments${query(paging)}`],
+    true,
   );
 
   tool(
-    "tag_item",
-    "Tag an item",
-    "Puts a tag, by id or value, on the item and everything beneath it, as POST /items/{id}/tags.",
-    { id: Ref, tag: z.string().min(1) },
-    ({ id, tag }) => ["POST", `/items/${at(id)}/tags`, { tag }],
+    "create_comment",
+    "Create a comment",
+    "Adds a comment to a task. A comment changes none of the task's fields.",
+    { taskId: TaskId, body: z.string().min(1).max(20_000).describe("The comment, in Markdown."), clientToken: ClientToken },
+    ({ taskId, ...comment }) => ["POST", `/tasks/${at(taskId)}/comments`, comment],
+  );
+
+  tool("list_labels", "List labels", "Returns labels by name.", { ...Paging }, (paging) => ["GET", `/labels${query(paging)}`], true);
+
+  tool(
+    "create_label",
+    "Create a label",
+    "Creates a label.",
+    { ...LabelFieldsInput.required({ name: true }).shape, clientToken: ClientToken },
+    (input) => ["POST", "/labels", input],
+  );
+
+  tool("get_label", "Get a label", "Returns a label.", { labelId: LabelId }, ({ labelId }) => ["GET", `/labels/${at(labelId)}`], true);
+
+  tool(
+    "update_label",
+    "Update a label",
+    "Changes the fields given.",
+    { labelId: LabelId, ...LabelFieldsInput.shape },
+    ({ labelId, ...fields }) => ["PATCH", `/labels/${at(labelId)}`, fields],
   );
 
   tool(
-    "untag_item",
-    "Untag an item",
-    "Takes a tag, by id or value, off the item and everything beneath it, as DELETE /items/{id}/tags/{tag}.",
-    { id: Ref, tag: z.string().min(1) },
-    ({ id, tag }) => ["DELETE", `/items/${at(id)}/tags/${at(tag)}`],
-  );
-
-  tool("get_queue", "The queue", "What the queue is running, what waits in it and why, and its running limit, as GET /queue.", {}, () => ["GET", "/queue"], true);
-
-  tool(
-    "start_item",
-    "Start an agent on an item",
-    "Asks the configured worker-service for an agent on the item, as POST /items/{id}/assignment; refused when none is configured.",
-    { id: Ref },
-    ({ id }) => ["POST", `/items/${at(id)}/assignment`],
+    "delete_label",
+    "Delete a label",
+    "Deletes a label and removes it from every task that has it.",
+    { labelId: LabelId },
+    ({ labelId }) => ["DELETE", `/labels/${at(labelId)}`],
   );
 
   return server;
