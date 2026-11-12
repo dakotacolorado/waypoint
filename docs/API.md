@@ -42,6 +42,7 @@ One entity, the work item, at exactly three levels: an epic has no parent, every
 | Skill | [#/components/schemas/Skill](#componentsschemasskill) |  |
 | Error | [#/components/schemas/Error](#componentsschemaserror) |  |
 | WorkItemView | [#/components/schemas/WorkItemView](#componentsschemasworkitemview) |  |
+| AcceptanceCriterion | [#/components/schemas/AcceptanceCriterion](#componentsschemasacceptancecriterion) |  |
 | Tick | [#/components/schemas/Tick](#componentsschemastick) |  |
 | Assignment | [#/components/schemas/Assignment](#componentsschemasassignment) | The agent last started on the item, by `POST /items/{id}/assignment`, kept after it finishes; null when none ever was. Written by that route alone, so it is the record of who works on the item, whatever its status. |
 | WorkItem | [#/components/schemas/WorkItem](#componentsschemasworkitem) |  |
@@ -298,7 +299,11 @@ The item to create.
   type?: enum[epic, story, task] //default: task
   title: string //minLength: 1 //maxLength: 200
   body?: string //maxLength: 20000 //default: 
-  acceptanceCriteria?: string[] //minLength: 1 //maxItems: 50
+  acceptanceCriteria?: Partial(string) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id?: string //pattern: ^c[1-9][0-9]*$
+     text: string //minLength: 1
+   })[] //maxItems: 50
   // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
   status?: enum[backlog, ready, in_progress, review, done] //default: backlog
   // A story for a task, an epic for a story, null only for an epic.
@@ -490,8 +495,12 @@ Fields to change.
   type?: enum[epic, story, task]
   title?: string //minLength: 1 //maxLength: 200
   body?: string //maxLength: 20000
-  acceptanceCriteria?: string[] //minLength: 1 //maxItems: 50
-  met?: string[] //maxItems: 50
+  acceptanceCriteria?: Partial(string) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id?: string //pattern: ^c[1-9][0-9]*$
+     text: string //minLength: 1
+   })[] //maxItems: 50
+  met?: string[] //minLength: 1 //maxItems: 50
   // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
   status?: enum[backlog, ready, in_progress, review, done]
   // Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`.
@@ -691,12 +700,20 @@ id: string
     item: string //format: uuid
     action: enum[created, updated, deleted]
     changes: {
-      // `met` is recorded as the texts of the criteria ticked.
+      // `met` is recorded as the ids of the criteria ticked.
       field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
       // Null on `created`.
-      from: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+      from: Partial(string) & Partial(string[]) & Partial({
+         // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+         id: string //pattern: ^c[1-9][0-9]*$
+         text: string
+       }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
       // Null on `deleted`.
-      to: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+      to: Partial(string) & Partial(string[]) & Partial({
+         // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+         id: string //pattern: ^c[1-9][0-9]*$
+         text: string
+       }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
     }[]
     // When the service recorded it.
     at: string
@@ -1440,7 +1457,7 @@ claimed-by?: string //minLength: 1 //maxLength: 200
   tickCriterion
 
 - Description  
-  Adds one tick to `met`, by the criterion's text, recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.
+  Adds one tick to `met`, by the criterion's id (or unique text), recording this write's `claimed-by` and now; every other tick stays as it stands when the write lands, so two writers ticking different criteria at once both keep theirs. One already ticked changes nothing and records no history; otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.
 
 - Tags  
   items
@@ -1472,7 +1489,7 @@ The criterion to tick.
 
 ```typescript
 {
-  // The criterion's text, exactly as in `acceptanceCriteria`.
+  // The criterion's id, or its text when no other criterion of the item reads the same.
   criterion: string //minLength: 1
 }
 ```
@@ -1498,7 +1515,7 @@ The criterion to tick.
  }
 ```
 
-- 400 The request failed validation, or the item has no criterion with that text, named.
+- 400 The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids.
 
 `application/json`
 
@@ -1581,7 +1598,7 @@ The criterion to untick.
 
 ```typescript
 {
-  // The criterion's text, exactly as in `acceptanceCriteria`.
+  // The criterion's id, or its text when no other criterion of the item reads the same.
   criterion: string //minLength: 1
 }
 ```
@@ -1607,7 +1624,7 @@ The criterion to untick.
  }
 ```
 
-- 400 The request failed validation, or the item has no criterion with that text, named.
+- 400 The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids.
 
 `application/json`
 
@@ -2326,12 +2343,22 @@ id: string //format: uuid
  }
 ```
 
+### #/components/schemas/AcceptanceCriterion
+
+```typescript
+{
+  // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+  id: string //pattern: ^c[1-9][0-9]*$
+  text: string
+}
+```
+
 ### #/components/schemas/Tick
 
 ```typescript
 {
-  // The criterion's text, as it stood when ticked.
-  criterion: string
+  // The id of the criterion ticked.
+  criterion: string //pattern: ^c[1-9][0-9]*$
   // The `claimed-by` of the write that ticked it, unverified; null when it said nothing.
   by: string | null
   // When it was ticked.
@@ -2372,10 +2399,14 @@ id: string //format: uuid
   type: enum[epic, story, task]
   title: string
   body: string
-  acceptanceCriteria: string[]
+  acceptanceCriteria: {
+    // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+    id: string //pattern: ^c[1-9][0-9]*$
+    text: string
+  }[]
   met: {
-    // The criterion's text, as it stood when ticked.
-    criterion: string
+    // The id of the criterion ticked.
+    criterion: string //pattern: ^c[1-9][0-9]*$
     // The `claimed-by` of the write that ticked it, unverified; null when it said nothing.
     by: string | null
     // When it was ticked.
@@ -2444,7 +2475,11 @@ id: string //format: uuid
   type?: enum[epic, story, task] //default: task
   title: string //minLength: 1 //maxLength: 200
   body?: string //maxLength: 20000 //default: 
-  acceptanceCriteria?: string[] //minLength: 1 //maxItems: 50
+  acceptanceCriteria?: Partial(string) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id?: string //pattern: ^c[1-9][0-9]*$
+     text: string //minLength: 1
+   })[] //maxItems: 50
   // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
   status?: enum[backlog, ready, in_progress, review, done] //default: backlog
   // A story for a task, an epic for a story, null only for an epic.
@@ -2495,8 +2530,12 @@ id: string //format: uuid
   type?: enum[epic, story, task]
   title?: string //minLength: 1 //maxLength: 200
   body?: string //maxLength: 20000
-  acceptanceCriteria?: string[] //minLength: 1 //maxItems: 50
-  met?: string[] //maxItems: 50
+  acceptanceCriteria?: Partial(string) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id?: string //pattern: ^c[1-9][0-9]*$
+     text: string //minLength: 1
+   })[] //maxItems: 50
+  met?: string[] //minLength: 1 //maxItems: 50
   // Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty.
   status?: enum[backlog, ready, in_progress, review, done]
   // Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`.
@@ -2526,12 +2565,20 @@ id: string //format: uuid
   item: string //format: uuid
   action: enum[created, updated, deleted]
   changes: {
-    // `met` is recorded as the texts of the criteria ticked.
+    // `met` is recorded as the ids of the criteria ticked.
     field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
     // Null on `created`.
-    from: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+    from: Partial(string) & Partial(string[]) & Partial({
+       // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+       id: string //pattern: ^c[1-9][0-9]*$
+       text: string
+     }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
     // Null on `deleted`.
-    to: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+    to: Partial(string) & Partial(string[]) & Partial({
+       // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+       id: string //pattern: ^c[1-9][0-9]*$
+       text: string
+     }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
   }[]
   // When the service recorded it.
   at: string
@@ -2545,12 +2592,20 @@ id: string //format: uuid
 
 ```typescript
 {
-  // `met` is recorded as the texts of the criteria ticked.
+  // `met` is recorded as the ids of the criteria ticked.
   field: enum[type, title, body, acceptanceCriteria, met, status, heldBy, reviewedBy, state, closedReason, parent, dependsOn, queuedAt, tags, assignment]
   // Null on `created`.
-  from: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+  from: Partial(string) & Partial(string[]) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id: string //pattern: ^c[1-9][0-9]*$
+     text: string
+   }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
   // Null on `deleted`.
-  to: Partial(string) & Partial(string[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
+  to: Partial(string) & Partial(string[]) & Partial({
+     // The criterion's id on its item: `c1`, `c2`, …, kept while it stays.
+     id: string //pattern: ^c[1-9][0-9]*$
+     text: string
+   }[]) & Partial(boolean) & Partial(#/components/schemas/Assignment) & Partial()
 }
 ```
 
@@ -2627,7 +2682,7 @@ id: string //format: uuid
 
 ```typescript
 {
-  // The criterion's text, exactly as in `acceptanceCriteria`.
+  // The criterion's id, or its text when no other criterion of the item reads the same.
   criterion: string //minLength: 1
 }
 ```

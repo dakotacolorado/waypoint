@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Tokens } from "./auth.ts";
+import { banner } from "./banner.ts";
 import { PACKAGE_VERSION, start, type Running } from "./server.ts";
 import { WorkItemStore } from "./store.ts";
 
@@ -21,7 +22,8 @@ Options:
   --host <addr>     address to listen on (default 127.0.0.1, or WAYPOINT_HOST)
   --port <n>        port (default 4400, or WAYPOINT_PORT)
   --db <path>       the SQLite file (default ~/.waypoint/waypoint.db, or WAYPOINT_DB)
-  --ui-url <url>    where links to items open (default this server's address, or WAYPOINT_UI_URL)
+  --ui-url <url>    its public address, as https://host/waypoint behind a proxy: what links,
+                    the banner and the docs say (default this server's address, or WAYPOINT_UI_URL)
   -h, --help        this
 
 Environment:
@@ -107,16 +109,11 @@ const workers = env.WAYPOINT_WORKERS_URL && env.WAYPOINT_WORKERS_TOKEN ? { url: 
 // Started once listening, so links default to the port it took, which `--port 0` leaves to the OS.
 let running: Running | undefined;
 const server = serve({ fetch: (request) => running!.api.fetch(request), hostname: host, port }, (info) => {
-  running = start({
-    db: path,
-    uiUrl: (values["ui-url"] ?? env.WAYPOINT_UI_URL ?? shown(info.port)).replace(/\/+$/, ""),
-    adminToken: env.WAYPOINT_ADMIN_TOKEN,
-    workers,
-  });
+  const publicUrl = (values["ui-url"] ?? env.WAYPOINT_UI_URL ?? shown(info.port)).replace(/\/+$/, "");
+  running = start({ db: path, uiUrl: publicUrl, adminToken: env.WAYPOINT_ADMIN_TOKEN, workers });
   const made = running.tokens.hasAdmin() ? null : running.tokens.create("admin", true);
-  process.stdout.write(`waypoint v${PACKAGE_VERSION} listening on ${shown(info.port)}, data in ${path}\n`);
-  process.stdout.write(workers ? `dispatching queued items to ${workers.url}\n` : "no worker-service configured: queued items wait\n");
-  if (made) process.stdout.write(`admin token (shown once, kept only as a hash): ${made}\n`);
+  const color = Boolean(process.stdout.isTTY) && !env.NO_COLOR;
+  process.stdout.write(banner({ version: PACKAGE_VERSION, url: shown(info.port), publicUrl, db: path, workers: workers?.url ?? null, token: made, color }));
 });
 
 const stop = () => {

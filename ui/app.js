@@ -1,6 +1,8 @@
 // waypoint's page: the board, an item, and a form for a new one, over the same API agents use.
 // Every element is made with `h`, which sets text, never HTML, so nothing an item says is run.
 
+import { EMOJI, LETTERS, PIN_SVG, SUMMARY, TAGLINE } from "./banner.js";
+
 const STATUSES = ["backlog", "ready", "in_progress", "review", "done"];
 const TYPES = ["epic", "story", "task"];
 const PARENT = { epic: null, story: "epic", task: "story" };
@@ -24,6 +26,38 @@ function h(tag, props = {}, ...children) {
 }
 
 const token = () => localStorage.getItem(TOKEN_KEY);
+
+/** Where this page is served, as `https://host/waypoint/`: the base of the API and the MCP server too. */
+const base = () => `${location.origin}${location.pathname}`;
+
+/** The block-letter name with the pin beside it; `small` above the board. The SVG is the server's own constant, not anything an item says. */
+function wordmark(small = false) {
+  const pin = new DOMParser().parseFromString(PIN_SVG, "image/svg+xml").documentElement;
+  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), document.importNode(pin, true));
+}
+
+/** The page's own landing: the mark, what waypoint is, and where its API and MCP server answer. */
+function landing(small) {
+  return h(
+    "div",
+    { class: "landing" },
+    wordmark(small),
+    h("p", { class: "tagline" }, TAGLINE),
+    h("p", { class: "muted" }, SUMMARY),
+    h(
+      "p",
+      { class: "endpoints muted" },
+      "API ",
+      h("code", {}, `${base()}items`),
+      " · MCP ",
+      h("code", {}, `${base()}mcp`),
+      " · docs: ",
+      h("a", { href: "./docs/api", target: "_blank" }, "API"),
+      ", ",
+      h("a", { href: "./docs/mcp", target: "_blank" }, "MCP"),
+    ),
+  );
+}
 
 class ApiError extends Error {
   constructor(status, body) {
@@ -94,13 +128,13 @@ function signIn() {
         }
       },
     },
-    h("h1", {}, "Sign in"),
-    h("p", { class: "muted" }, "Paste a token: the admin token `waypoint serve` printed, or one from `waypoint token create`. It stays in this browser."),
+    h("h2", {}, "Sign in"),
+    h("p", { class: "muted" }, "Paste a token: the admin token waypoint printed when it first started, or one from waypoint token create. It stays in this browser."),
     input,
     box,
     h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Sign in")),
   );
-  main.replaceChildren(form);
+  main.replaceChildren(h("div", { class: "signin" }, landing(false), form));
   input.focus();
 }
 
@@ -165,7 +199,7 @@ async function board(params) {
       ),
     );
   });
-  main.replaceChildren(filters, h("div", { class: "board" }, columns));
+  main.replaceChildren(landing(true), filters, h("div", { class: "board" }, columns));
 }
 
 async function itemPage(ref) {
@@ -237,7 +271,7 @@ async function itemPage(ref) {
           "ul",
           { class: "plain" },
           item.acceptanceCriteria.map((criterion) => {
-            const tick = met.get(criterion);
+            const tick = met.get(criterion.id);
             return h(
               "li",
               {},
@@ -247,9 +281,9 @@ async function itemPage(ref) {
                 h("input", {
                   type: "checkbox",
                   checked: Boolean(tick),
-                  onchange: (e) => act(box, () => api(e.target.checked ? "POST" : "DELETE", `/items/${item.id}/met`, { criterion })),
+                  onchange: (e) => act(box, () => api(e.target.checked ? "POST" : "DELETE", `/items/${item.id}/met`, { criterion: criterion.id })),
                 }),
-                h("span", {}, criterion, tick && h("span", { class: "muted" }, ` · ${tick.by ?? "the person"}, ${when(tick.at)}`)),
+                h("span", {}, criterion.text, tick && h("span", { class: "muted" }, ` · ${tick.by ?? "the person"}, ${when(tick.at)}`)),
               ),
             );
           }),
@@ -335,7 +369,8 @@ function editForm(item) {
   const body = h("textarea", { style: "min-height:200px" });
   body.value = item.body;
   const criteria = h("textarea", {});
-  criteria.value = item.acceptanceCriteria.join("\n");
+  // A line left as it was keeps its criterion's id and tick: the API matches it by its text.
+  criteria.value = item.acceptanceCriteria.map((criterion) => criterion.text).join("\n");
   const box = errorBox();
   main.replaceChildren(
     h(

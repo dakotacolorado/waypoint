@@ -103,3 +103,23 @@ describe("WorkItemStore's writes", () => {
     expect(tagged((await store.history(epic.id))!)).toEqual([story.id, task.id]);
   });
 });
+
+describe("a record written before criteria had ids", () => {
+  it("reads its texts as c1, c2, … and moves each tick by text onto one criterion, so twins are not all ticked", () => {
+    const item = WorkItemStore.itemFromRecord({
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "old",
+      acceptanceCriteria: ["same", "same", "other"],
+      met: [{ criterion: "same", by: "a", at: "2026-01-01T00:00:00.000Z" }],
+      status: "backlog",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(item.acceptanceCriteria).toEqual([
+      { id: "c1", text: "same" },
+      { id: "c2", text: "same" },
+      { id: "c3", text: "other" },
+    ]);
+    expect(item.met).toEqual([{ criterion: "c1", by: "a", at: "2026-01-01T00:00:00.000Z" }]);
+  });
+});

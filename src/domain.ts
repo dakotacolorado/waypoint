@@ -8,6 +8,7 @@ import type {
   HistoryEntrySchema,
   PatchSchema,
   TickSchema,
+  CriterionSchema,
   WorkItemSchema,
   WorkLogEntrySchema,
 } from "./schema.ts";
@@ -76,6 +77,41 @@ export type Patch = z.infer<typeof PatchSchema>;
 export type Change = z.infer<typeof ChangeSchema>;
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 export type Tick = z.infer<typeof TickSchema>;
+export type Criterion = z.infer<typeof CriterionSchema>;
+/** A criterion as a draft or patch gives it. */
+export type CriterionInput = string | { id?: string; text: string };
+
+const idNumber = (id: string) => Number(id.slice(1));
+
+/** `given` as criteria, each a text getting the next id after every one of `current`'s and those before it. */
+function criteriaWithIds(given: CriterionInput[], current: Criterion[]): Criterion[] {
+  const known = new Map(current.map((each) => [each.id, each]));
+  const claimed = new Set<string>();
+  const unknown = given.flatMap((each) => (typeof each !== "string" && each.id !== undefined && !known.has(each.id) ? [each.id] : []));
+  if (unknown.length) throw new GraphError(`no criterion of this item has the id ${unknown.join(", ")}`);
+  for (const each of given) if (typeof each !== "string" && each.id !== undefined) claimed.add(each.id);
+  let next = Math.max(0, ...current.map((each) => idNumber(each.id)));
+  return given.map((each) => {
+    const text = typeof each === "string" ? each : each.text;
+    if (typeof each !== "string" && each.id !== undefined) return { id: each.id, text };
+    // A text that already reads exactly as an unclaimed criterion keeps that criterion, and its tick.
+    const same = current.find((criterion) => criterion.text === text && !claimed.has(criterion.id));
+    if (same) {
+      claimed.add(same.id);
+      return { id: same.id, text };
+    }
+    return { id: `c${++next}`, text };
+  });
+}
+
+/** The id of the criterion `ref` names: its id, or its text when only one criterion reads it. Throws otherwise. */
+export function criterionId(criteria: Criterion[], ref: string): string {
+  if (criteria.some((each) => each.id === ref)) return ref;
+  const reading = criteria.filter((each) => each.text === ref);
+  if (reading.length === 1) return reading[0]!.id;
+  if (reading.length > 1) throw new GraphError(`${reading.length} criteria read "${ref}": ${reading.map((each) => each.id).join(", ")}; name one by its id`);
+  throw new GraphError(`no criterion of this item has the id or reads "${ref}"`);
+}
 export type Assignment = z.infer<typeof AssignmentSchema>;
 export type Comment = z.infer<typeof CommentSchema>;
 export type WorkLogEntry = z.infer<typeof WorkLogEntrySchema>;
@@ -122,7 +158,7 @@ export class WorkItem {
   readonly type!: Type;
   readonly title!: string;
   readonly body!: string;
-  readonly acceptanceCriteria!: string[];
+  readonly acceptanceCriteria!: Criterion[];
   readonly met!: Tick[];
   readonly status!: Status;
   readonly state!: State;
@@ -139,8 +175,8 @@ export class WorkItem {
 
   constructor(props: WorkItemProps) {
     const held = props.state === "open" && HELD.includes(props.status);
-    // A tick is on a criterion's text: once that text is gone, so is the tick.
-    const met = props.acceptanceCriteria.flatMap((criterion) => props.met.find((tick) => tick.criterion === criterion) ?? []);
+    // A tick is on a criterion's id: once that criterion is gone, so is the tick.
+    const met = props.acceptanceCriteria.flatMap((criterion) => props.met.find((tick) => tick.criterion === criterion.id) ?? []);
     // Closing or starting an item takes it off the queue in the write that does it.
     const queuable = props.state === "open" && UNSTARTED.includes(props.status);
     Object.assign(this, { ...props, met, heldBy: held ? props.heldBy : null, queuedAt: queuable ? props.queuedAt : null });
@@ -148,13 +184,14 @@ export class WorkItem {
 
   /** `by` is the write's `claimed-by`; it holds the item if the write starts it. */
   static create(
-    draft: Draft,
+    draft: Omit<Draft, "acceptanceCriteria"> & { acceptanceCriteria: CriterionInput[] },
     by: string | null = null,
     now = new Date().toISOString(),
     id: string = randomUUID(),
   ): WorkItem {
     return new WorkItem({
       ...draft,
+      acceptanceCriteria: criteriaWithIds(draft.acceptanceCriteria.map((each) => (typeof each === "string" ? each : each.text)), []),
       met: [],
       id,
       state: "open",
@@ -171,14 +208,14 @@ export class WorkItem {
 
   /** `by` is the write's `claimed-by`; it holds the item if the write moves it to `in_progress`. */
   patched(patch: Patch, by: string | null = null, now = new Date().toISOString()): WorkItem {
-    const { met: named, force: _force, queued, tags: _tags, ...fields } = patch;
+    const { met: named, force: _force, queued, tags: _tags, acceptanceCriteria: criteria, ...fields } = patch;
     const next = { ...this.toJSON(), ...fields, updatedAt: now };
+    if (criteria !== undefined) next.acceptanceCriteria = criteriaWithIds(criteria, this.acceptanceCriteria);
     if (queued === false) next.queuedAt = null;
     if (queued === true) next.queuedAt = this.queuedAt ?? now;
     if (named !== undefined) {
-      const unknown = named.filter((criterion) => !next.acceptanceCriteria.includes(criterion));
-      if (unknown.length) throw new GraphError(`met names no criterion of this item: ${unknown.map((each) => `"${each}"`).join(", ")}`);
-      next.met = named.map((criterion) => this.met.find((tick) => tick.criterion === criterion) ?? { criterion, by, at: now });
+      const ids = [...new Set(named.map((ref) => criterionId(next.acceptanceCriteria, ref)))];
+      next.met = ids.map((criterion) => this.met.find((tick) => tick.criterion === criterion) ?? { criterion, by, at: now });
     }
     if (next.state === "open") next.closedReason = null;
     if (next.state === "closed" && this.state === "open") next.assignment = ended(this.assignment, now, `the item was closed as ${next.closedReason}`);
@@ -190,21 +227,17 @@ export class WorkItem {
    * With `criterion` ticked by `by` at `now`, the other ticks untouched; itself when
    * already ticked. Throws for a criterion the item does not have.
    */
-  ticked(criterion: string, by: string | null, now = new Date().toISOString()): WorkItem {
-    this.checkCriterion(criterion);
+  ticked(ref: string, by: string | null, now = new Date().toISOString()): WorkItem {
+    const criterion = criterionId(this.acceptanceCriteria, ref);
     if (this.met.some((tick) => tick.criterion === criterion)) return this;
     return new WorkItem({ ...this.toJSON(), met: [...this.met, { criterion, by, at: now }], updatedAt: now });
   }
 
   /** With `criterion` unticked, the other ticks untouched; itself when not ticked. Throws as `ticked`. */
-  unticked(criterion: string, now = new Date().toISOString()): WorkItem {
-    this.checkCriterion(criterion);
+  unticked(ref: string, now = new Date().toISOString()): WorkItem {
+    const criterion = criterionId(this.acceptanceCriteria, ref);
     if (!this.met.some((tick) => tick.criterion === criterion)) return this;
     return new WorkItem({ ...this.toJSON(), met: this.met.filter((tick) => tick.criterion !== criterion), updatedAt: now });
-  }
-
-  private checkCriterion(criterion: string): void {
-    if (!this.acceptanceCriteria.includes(criterion)) throw new GraphError(`no criterion of this item reads "${criterion}"`);
   }
 
   /** Carrying `tags` instead; tags are written by their own routes only, never by a patch. */

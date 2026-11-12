@@ -25,7 +25,20 @@ const Ref = z
   .describe("An item's id, or a prefix of it at least 8 characters long, such as its `shortId`.");
 const Title = z.string().trim().min(1).max(200);
 const Body = z.string().max(20_000);
-const Criteria = z.array(z.string().trim().min(1)).max(50);
+const CriterionText = z.string().trim().min(1);
+const CriterionId = z.string().regex(/^c[1-9][0-9]*$/).describe("The criterion's id on its item: `c1`, `c2`, …, kept while it stays.");
+
+export const CriterionSchema = z
+  .object({ id: CriterionId, text: z.string() })
+  .openapi("AcceptanceCriterion");
+
+/** As a draft or patch gives them: a text, or an existing criterion by its id with its text, to keep its id and tick through an edit. */
+const Criteria = z
+  .array(z.union([CriterionText, z.object({ id: CriterionId.optional(), text: CriterionText })]))
+  .max(50);
+
+/** A criterion named in a request: its id, or its text when no other criterion of the item reads the same. */
+const CriterionRef = z.string().trim().min(1);
 const DependsOn = z.array(Ref).max(50);
 /** Refused rather than stripped, so a caller sending `tags` learns where they are written. */
 const NotTags = z
@@ -43,7 +56,7 @@ const StatusInput = Status.describe(
 
 export const TickSchema = z
   .object({
-    criterion: z.string().describe("The criterion's text, as it stood when ticked."),
+    criterion: CriterionId.describe("The id of the criterion ticked."),
     by: z
       .string()
       .nullable()
@@ -89,15 +102,15 @@ export const WorkItemSchema = z
     type: Type,
     title: z.string(),
     body: z.string(),
-    acceptanceCriteria: z.array(z.string()),
+    acceptanceCriteria: z
+      .array(CriterionSchema)
+      .describe("In order, each with its own id, so two criteria that read the same are still told apart."),
     met: z
       .array(TickSchema)
       .describe(
-        "The acceptance criteria a reviewer has ticked as met, in the order of " +
-          "`acceptanceCriteria`. Ticked and unticked one at a time by POST and DELETE " +
-          "`/items/{id}/met`, or all at once by a patch's `met`; a tick goes when its criterion's text " +
-          "changes or the criterion is dropped, so an edited criterion is met again only once " +
-          "ticked again.",
+        "The acceptance criteria ticked as met, by id, in the order of `acceptanceCriteria`. " +
+          "Ticked and unticked one at a time by POST and DELETE `/items/{id}/met`, or all at once by a " +
+          "patch's `met`. A tick stays through an edit that keeps its criterion's id, and goes with the criterion.",
       ),
     status: Status,
     state: State.describe(
@@ -171,11 +184,11 @@ export const WorkItemSchema = z
   })
   .openapi("WorkItem");
 
-const FieldValue = z.union([z.string(), z.array(z.string()), z.boolean(), AssignmentSchema, z.null()]);
+const FieldValue = z.union([z.string(), z.array(z.string()), z.array(CriterionSchema), z.boolean(), AssignmentSchema, z.null()]);
 
 export const ChangeSchema = z
   .object({
-    field: z.enum(RECORDED).describe("`met` is recorded as the texts of the criteria ticked."),
+    field: z.enum(RECORDED).describe("`met` is recorded as the ids of the criteria ticked."),
     from: FieldValue.describe("Null on `created`."),
     to: FieldValue.describe("Null on `deleted`."),
   })
@@ -282,7 +295,7 @@ export const DraftSchema = z
     type: Type.default("task"),
     title: Title,
     body: Body.default(""),
-    acceptanceCriteria: Criteria.default([]).describe("One line per criterion."),
+    acceptanceCriteria: Criteria.default([]).describe("One per criterion, each a text; they are given ids `c1`, `c2`, … in order."),
     status: StatusInput.default("backlog"),
     parent: Ref.nullable()
       .default(null)
@@ -297,12 +310,16 @@ export const PatchSchema = z
     type: Type,
     title: Title,
     body: Body,
-    acceptanceCriteria: Criteria,
+    acceptanceCriteria: Criteria.describe(
+      "Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under " +
+        "the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. " +
+        "An id the item does not have is refused with 400.",
+    ),
     met: z
-      .array(z.string())
+      .array(CriterionRef)
       .max(50)
       .describe(
-        "Every criterion now met, by its text: replaces every tick held, so a tick another " +
+        "Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another " +
           "writer made since this one read the item is lost. To tick or untick one criterion, " +
           "use POST or DELETE `/items/{id}/met`. One already ticked " +
           "keeps who ticked it and when; one newly named is ticked by this write's " +
@@ -660,12 +677,12 @@ export const untagItemRoute = createRoute({
 });
 
 const Criterion = z
-  .object({ criterion: z.string().trim().min(1).describe("The criterion's text, exactly as in `acceptanceCriteria`.") })
+  .object({ criterion: CriterionRef.describe("The criterion's id, or its text when no other criterion of the item reads the same.") })
   .openapi("Criterion");
 
 const TICK_RESPONSES = {
   ...FAILS_OR_MISSING,
-  400: json(ErrorSchema, "The request failed validation, or the item has no criterion with that text, named."),
+  400: json(ErrorSchema, "The request failed validation, or the item has no such criterion, or more than one reads that text, naming their ids."),
   409: json(ConflictSchema, "Other writes kept landing first, so retry; or an id was given as a prefix that more than one item's id starts with."),
 };
 
@@ -676,7 +693,7 @@ export const tickRoute = createRoute({
   operationId: "tickCriterion",
   summary: "Tick one acceptance criterion as met",
   description:
-    "Adds one tick to `met`, by the criterion's text, recording this write's `claimed-by` and now; " +
+    "Adds one tick to `met`, by the criterion's id (or unique text), recording this write's `claimed-by` and now; " +
     "every other tick stays as it stands when the write lands, so two writers ticking different " +
     "criteria at once both keep theirs. One already ticked changes nothing and records no history; " +
     "otherwise `history` records it as a `met` change. Refused with 400 for a criterion the item does not have.",

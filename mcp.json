@@ -117,12 +117,33 @@
           },
           "acceptanceCriteria": {
             "default": [],
-            "description": "One line per criterion.",
+            "description": "One per criterion, each a text; they are given ids `c1`, `c2`, … in order.",
             "maxItems": 50,
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^c[1-9][0-9]*$",
+                      "description": "The criterion's id on its item: `c1`, `c2`, …, kept while it stays."
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ]
+                }
+              ]
             }
           },
           "status": {
@@ -211,17 +232,40 @@
                 "maxItems": 50,
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "minLength": 1
-                }
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^c[1-9][0-9]*$",
+                          "description": "The criterion's id on its item: `c1`, `c2`, …, kept while it stays."
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ]
+                    }
+                  ]
+                },
+                "description": "Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. An id the item does not have is refused with 400."
               },
               "met": {
                 "maxItems": 50,
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
-                "description": "Every criterion now met, by its text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400."
+                "description": "Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400."
               },
               "status": {
                 "type": "string",
@@ -490,7 +534,7 @@
     {
       "name": "tick_criterion",
       "title": "Tick a criterion",
-      "description": "Marks one of the item's acceptance criteria met, by its exact text, as POST /items/{id}/met.",
+      "description": "Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -502,7 +546,8 @@
           },
           "criterion": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The criterion's id, as `c2`, or its text when unique."
           }
         },
         "required": [
@@ -521,7 +566,7 @@
     {
       "name": "untick_criterion",
       "title": "Untick a criterion",
-      "description": "Marks one of the item's acceptance criteria not met, by its exact text, as DELETE /items/{id}/met.",
+      "description": "Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -533,7 +578,8 @@
           },
           "criterion": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The criterion's id, as `c2`, or its text when unique."
           }
         },
         "required": [

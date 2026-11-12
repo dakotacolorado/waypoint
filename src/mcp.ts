@@ -113,16 +113,16 @@ export function mcpServer(version: string, call: Call): McpServer {
   tool(
     "tick_criterion",
     "Tick a criterion",
-    "Marks one of the item's acceptance criteria met, by its exact text, as POST /items/{id}/met.",
-    { id: Ref, criterion: z.string().min(1) },
+    "Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.",
+    { id: Ref, criterion: z.string().min(1).describe("The criterion's id, as `c2`, or its text when unique.") },
     ({ id, criterion }) => ["POST", `/items/${at(id)}/met`, { criterion }],
   );
 
   tool(
     "untick_criterion",
     "Untick a criterion",
-    "Marks one of the item's acceptance criteria not met, by its exact text, as DELETE /items/{id}/met.",
-    { id: Ref, criterion: z.string().min(1) },
+    "Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.",
+    { id: Ref, criterion: z.string().min(1).describe("The criterion's id, as `c2`, or its text when unique.") },
     ({ id, criterion }) => ["DELETE", `/items/${at(id)}/met`, { criterion }],
   );
 

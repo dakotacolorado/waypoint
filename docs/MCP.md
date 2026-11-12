@@ -87,7 +87,7 @@ Creates an epic, story or task, as POST /items. A story needs an epic as parent,
 | `type` | `epic`, `story`, `task` |  |  |
 | `title` | string | yes |  |
 | `body` | string |  |  |
-| `acceptanceCriteria` | string[] |  | One line per criterion. |
+| `acceptanceCriteria` | string or object[] |  | One per criterion, each a text; they are given ids `c1`, `c2`, … in order. |
 | `status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
 | `parent` | string or null |  | A story for a task, an epic for a story, null only for an epic. |
 | `dependsOn` | string[] |  |  |
@@ -103,8 +103,8 @@ Changes the fields given in `changes`, as PATCH /items/{id}: status, title, body
 | `changes.type` | `epic`, `story`, `task` |  |  |
 | `changes.title` | string |  |  |
 | `changes.body` | string |  |  |
-| `changes.acceptanceCriteria` | string[] |  |  |
-| `changes.met` | string[] |  | Every criterion now met, by its text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400. |
+| `changes.acceptanceCriteria` | string or object[] |  | Every criterion, in order, replacing the list. One given as `{id, text}` keeps that id, and its tick, under the text given; one given as a text keeps the id of a criterion that already reads exactly that, else gets a new id. An id the item does not have is refused with 400. |
+| `changes.met` | string[] |  | Every criterion now met, each by its id or its unique text: replaces every tick held, so a tick another writer made since this one read the item is lost. To tick or untick one criterion, use POST or DELETE `/items/{id}/met`. One already ticked keeps who ticked it and when; one newly named is ticked by this write's `claimed-by`, now. Each must be one of the item's `acceptanceCriteria` as this write leaves them, or the write is refused with 400. |
 | `changes.status` | `backlog`, `ready`, `in_progress`, `review`, `done` |  | Read back as given until the item has children. On a parent it is stored but has no effect while the parent has children, `done` included: a parent reads `done` by itself once every open child does, so there is nothing to sign off. Never changes a child. `in_progress`, `review` or `done` on a parent still reading `backlog` or `ready` is its Start: refused with 409 while its `blockedBy`, its children's blockers included, is not empty. |
 | `changes.state` | `open`, `closed` |  | Closing closes everything still open beneath the item, for the same reason; reopening opens only the item, keeping its status. Closing an epic that has children as `completed` is the person's sign-off: refused with 403 from a write that sends `claimed-by`. |
 | `changes.closedReason` | `completed`, `not_planned` |  | Required with, and only with, `state: closed`. |
@@ -168,21 +168,21 @@ Records what was done on the item, with links to what it made, as POST /items/{i
 
 ### tick_criterion
 
-Marks one of the item's acceptance criteria met, by its exact text, as POST /items/{id}/met.
+Marks one of the item's acceptance criteria met, by its id (c1, c2, …) or its exact text when no other reads the same, as POST /items/{id}/met.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `criterion` | string | yes |  |
+| `criterion` | string | yes | The criterion's id, as `c2`, or its text when unique. |
 
 ### untick_criterion
 
-Marks one of the item's acceptance criteria not met, by its exact text, as DELETE /items/{id}/met.
+Marks one of the item's acceptance criteria not met, by its id or its unique text, as DELETE /items/{id}/met.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `id` | string | yes | The item's id, or a prefix of it at least 8 characters long, such as its shortId. |
-| `criterion` | string | yes |  |
+| `criterion` | string | yes | The criterion's id, as `c2`, or its text when unique. |
 
 ### list_tags
 

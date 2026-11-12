@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { type Assignment, AmbiguousIdError, BlockedError, ForbiddenError, GraphError, note, type Note } from "./domain.ts";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { mcpServer, type Call } from "./mcp.ts";
+import { EMOJI, LETTERS_ONLY, PIN_SVG, SUMMARY, TAGLINE } from "./banner.ts";
 import * as routes from "./schema.ts";
 import { readSkill, SKILL_DIR, type Skill } from "./skill.ts";
 import { AgentRefusedError, Assigner, type AgentOutcome, type Agents } from "./assignment.ts";
@@ -18,6 +19,8 @@ export const SPEC_PATH = "/openapi.json";
 export interface ApiOptions {
   /** What `/health` says this copy is. */
   about?: { version: string; commit: string };
+  /** Where people and agents reach it, as `https://host/waypoint`: what the served docs give as its address. */
+  publicUrl?: string;
   /** What `GET /skill` serves. */
   skill?: () => Skill;
   /**
@@ -34,6 +37,7 @@ export class WorkTrackerApi {
   private readonly store: WorkItemStore;
   private readonly auth: Auth;
   private readonly about: { version: string; commit: string };
+  private readonly publicUrl: string | undefined;
   private readonly skill: () => Skill;
   private readonly assigner: () => Assigner;
   private readonly fleet: Pick<Agents, "get" | "requestOf">;
@@ -42,6 +46,7 @@ export class WorkTrackerApi {
     this.store = store;
     this.auth = auth;
     this.about = options.about ?? { version: "0.0.0", commit: "unknown" };
+    this.publicUrl = options.publicUrl;
     this.skill = options.skill ?? (() => readSkill(SKILL_DIR, 0, "unknown", ""));
     const assigner = options.assigner ?? unconfigured;
     const fleet = options.fleet ?? unconfigured;
@@ -71,8 +76,15 @@ export class WorkTrackerApi {
     this.hono.get("/", page("ui/index.html", "text/html"));
     this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
     this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
+    const mark = Object.entries({ LETTERS: LETTERS_ONLY, PIN_SVG, EMOJI, TAGLINE, SUMMARY })
+      .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};\n`)
+      .join("");
+    this.hono.get("/ui/banner.js", (c) => c.body(mark, 200, { "content-type": "text/javascript; charset=utf-8" }));
     this.hono.get("/docs/api", page("docs/index.html", "text/html"));
-    this.hono.get("/docs/mcp", page("docs/mcp.html", "text/html"));
+    // The docs' example address is a local one; served, they give this deployment's own.
+    const local = "http://127.0.0.1:4400";
+    const mcpDocs = file("docs/mcp.html").replaceAll(local, this.publicUrl ?? local);
+    this.hono.get("/docs/mcp", (c) => c.body(mcpDocs, 200, { "content-type": "text/html; charset=utf-8" }));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
   }
 
