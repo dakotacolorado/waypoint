@@ -1,0 +1,66 @@
+#!/bin/sh
+# wt METHOD PATH [JSON]  -- one call to the work-tracker API.
+# wt link ID              -- a Markdown link to the item, titled with it.
+#
+#   wt GET '/items?state=open&type=epic'
+#   wt POST /items '{"type":"task","title":"…","parent":"<story id>"}'
+#   wt PATCH /items/6ff632ff '{"status":"in_progress"}'
+#   wt link 6ff632ff   # [6ff632ff A worker can say it is done…](<ui>/items/6ff632ff)
+#
+# Any id, in a path or a body, may be its short id (the item's `shortId`, or
+# any prefix of at least 8 characters).
+#
+# Prints the response body. Exits 1 on an HTTP error, with the status on stderr.
+#
+# The address and token come from the session's environment, which every
+# session is started with; the token is never printed. Writes carry
+# `claimed-by`: the worker's name, from CLAUDE_CONFIG_DIR
+# (<workers>/<name>/home/.claude).
+#
+# Env: WT_URL and WT_TOKEN (set for the session); WT_CLAIMED_BY overrides the name;
+# WT_UI_URL overrides the UI `link` points into.
+set -eu
+
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+if [ "${1-}" = link ]; then
+  [ $# -eq 2 ] || usage
+  # The UI this deployment's items open in, filled in as the service serves this file.
+  ui=${WT_UI_URL:-@WT_UI_URL@}
+  item=$("$0" GET "/items/$2")
+  printf %s "$item" | UI=${ui%/} node -e '
+    const { shortId, title } = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    const cut = title.length > 60 ? title.slice(0, 60).replace(/\s+\S*$/, "") + "…" : title;
+    const text = `${shortId} ${cut}`.replace(/[\\[\]]/g, "\\$&");
+    console.log(`[${text}](${process.env.UI}/items/${shortId})`);'
+  exit
+fi
+
+[ $# -ge 2 ] || usage
+method=$(printf %s "$1" | tr a-z A-Z) path=$2 body=${3-}
+
+url=${WT_URL:?"wt: WT_URL is not set: this session was started without the work tracker's address"}
+token=${WT_TOKEN:?"wt: WT_TOKEN is not set: this session was started without the work tracker's token"}
+
+if [ -n "${WT_CLAIMED_BY-}" ]; then
+  who=$WT_CLAIMED_BY
+else
+  case ${CLAUDE_CONFIG_DIR-} in
+  */home/.claude) who=$(basename "$(dirname "$(dirname "$CLAUDE_CONFIG_DIR")")") ;;
+  *) who=${USER:-claude} ;;
+  esac
+fi
+
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+# The token goes in by a header file on stdin, so it is never on a command line.
+set -- -sS -o "$out" -w '%{http_code}' -X "$method" -H @- -H "claimed-by: $who"
+[ -n "$body" ] && set -- "$@" -H 'content-type: application/json' --data-binary "$body"
+code=$(printf 'authorization: Bearer %s\n' "$token" | curl "$@" "${url%/}$path")
+
+cat "$out"
+[ -s "$out" ] && [ "$(tail -c1 "$out")" != "" ] && echo
+if [ "$code" -ge 400 ]; then
+  echo "wt: HTTP $code" >&2
+  exit 1
+fi
