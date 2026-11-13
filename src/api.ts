@@ -36,11 +36,8 @@ function page<T>(items: T[], maxResults: number | undefined, nextToken: string |
   return { page: items.slice(from, end), nextToken: end < items.length ? Buffer.from(String(end)).toString("base64url") : null };
 }
 
-/** Who a write is from: its `x-actor`, else its token's name; null for an admin token naming no one. */
-const actorOf = (c: Context<Env>): string | null => {
-  const caller = c.get("caller");
-  return c.req.header("x-actor") ?? (caller.admin ? null : caller.name);
-};
+/** Who a write is from: its `x-actor`, else its token's name; null for the environment's admin token naming no one. */
+const actorOf = (c: Context<Env>): string | null => c.req.header("x-actor") ?? c.get("caller").name;
 
 const fail = (c: Context, status: 400 | 401 | 404 | 409 | 500, code: string, message: string, details: Record<string, unknown> = {}) =>
   c.json({ code, message, ...details }, status);

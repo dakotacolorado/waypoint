@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import { Tokens } from "./auth.ts";
 import { banner, SUMMARY, TAGLINE } from "./banner.ts";
 import { PACKAGE_VERSION } from "./build.ts";
+import { OPEN_WORDS } from "./contract.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
 
@@ -32,8 +33,8 @@ Options:
 Environment:
   WAYPOINT_ADMIN_TOKEN       an admin token accepted beside the stored ones, never stored
 
-Every request but /health and /openapi.json needs a bearer token. With no admin token
-at all, serve makes one, named admin, and prints it once.
+${OPEN_WORDS.replaceAll("`", "")}
+With no admin token at all, serve makes one, named admin, and prints it once.
 `;
 
 const { values, positionals } = parseArgs({

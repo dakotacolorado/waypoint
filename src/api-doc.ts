@@ -55,6 +55,9 @@ const hidden = (name: string) => /^(Create|Update)\w*Input$|Response$/.test(name
 
 const anchor = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+/** The reference's title, naming its date as the API's version: "waypoint API, version 2026-11-12". */
+export const apiTitle = (info: { title: string; version: string }) => `${info.title}, version ${info.version}`;
+
 export function renderApiReference(doc: Document): string {
   const schemas = doc.components.schemas;
   const named = (schema: Schema) => (schema.$ref ? schema.$ref.split("/").pop()! : null);
@@ -117,7 +120,7 @@ export function renderApiReference(doc: Document): string {
     return Object.entries(s.properties ?? {}).flatMap(([name, value]) => field(name, value, required ? (s.required ?? []).includes(name) : null));
   };
 
-  const lines = [`# ${doc.info.title} API reference`, "", `API version ${doc.info.version}`, "", doc.info.description, "", "## Operations", ""];
+  const lines = [`# ${apiTitle(doc.info)}`, "", doc.info.description, "", "## Operations", ""];
   const operations = Object.entries(doc.paths).flatMap(([path, methods]) => Object.entries(methods).map(([method, op]) => ({ path, method, op })));
   for (const { op } of operations) lines.push(`- [${op.operationId}](#${anchor(op.operationId)}): ${op.summary}`);
   lines.push("", "## Data types", "", ...Object.keys(schemas).filter((name) => !hidden(name)).map((name) => `- [${name}](#${anchor(name)})`), "");

@@ -26,6 +26,9 @@ function h(tag, props = {}, ...children) {
 
 const token = () => localStorage.getItem(TOKEN_KEY);
 
+/** Who made a write; null is the environment's admin token, which has no name. */
+const who = (actor) => actor ?? "env admin token";
+
 /** Where this page is served, as `https://host:8444/`: the base of the API and the MCP server too. */
 const base = () => `${location.origin}${location.pathname}`;
 
@@ -153,13 +156,15 @@ function signIn() {
 }
 
 async function board(params) {
-  const closed = params.get("closed") === "1";
+  // Older links carry `closed=1`.
+  const cancelled = params.get("cancelled") === "1" || params.get("closed") === "1";
   const only = params.get("label") ?? "";
-  const [tasks, labelList] = await Promise.all([all(`/tasks${closed ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
+  const [tasks, labelList] = await Promise.all([all(`/tasks${cancelled ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
   const labels = new Map(labelList.map((each) => [each.id, each]));
   const shown = tasks.filter((task) => !only || task.labels.includes(only));
   const set = (key, value) => {
     const next = new URLSearchParams(params);
+    next.delete("closed");
     if (value) next.set(key, value);
     else next.delete(key);
     location.hash = `#/?${next}`;
@@ -168,10 +173,10 @@ async function board(params) {
     "div",
     { class: "filters" },
     h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name))),
-    h("label", { class: "check" }, h("input", { type: "checkbox", checked: closed, onchange: (e) => set("closed", e.target.checked ? "1" : "") }), "Show cancelled"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: cancelled, onchange: (e) => set("cancelled", e.target.checked ? "1" : "") }), "Show cancelled"),
     h("span", { class: "muted" }, `${shown.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
   );
-  const columns = (closed ? STATUSES : OPEN).map((status) => {
+  const columns = (cancelled ? STATUSES : OPEN).map((status) => {
     const here = shown.filter((task) => task.status === status);
     return h(
       "section",
@@ -272,7 +277,7 @@ async function taskPage(ref) {
                   // Only this entry says `met`, so a tick another caller makes meanwhile stands.
                   onchange: (e) => update({ criteria: task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, met: e.target.checked } : { id: each.id })) }),
                 }),
-                h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${criterion.metBy ?? "admin"}, ${when(criterion.metAt)}`)),
+                h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${who(criterion.metBy)}, ${when(criterion.metAt)}`)),
               ),
             ),
           ),
@@ -318,7 +323,7 @@ async function taskPage(ref) {
     "div",
     { class: "panel" },
     h("h2", {}, "Comments"),
-    comments.map((comment) => h("div", { class: "note" }, h("div", { class: "who" }, `${comment.author ?? "admin"} · ${when(comment.createdAt)}`), h("div", { class: "body" }, comment.body))),
+    comments.map((comment) => h("div", { class: "note" }, h("div", { class: "who" }, `${who(comment.author)} · ${when(comment.createdAt)}`), h("div", { class: "body" }, comment.body))),
     h(
       "form",
       { onsubmit: (e) => (e.preventDefault(), act(box, () => api("POST", `/tasks/${task.id}/comments`, { body: text.value }))) },
@@ -344,7 +349,7 @@ async function taskPage(ref) {
       "div",
       { class: "panel" },
       h("details", {}, h("summary", {}, `History (${history.length})`), h("ul", { class: "plain" }, history.slice().reverse().map((entry) =>
-        h("li", {}, h("div", { class: "who muted" }, `${entry.action} · ${entry.actor ?? "admin"} · ${when(entry.at)}`), h("div", {}, entry.changes.map((change) => change.field).join(", "))),
+        h("li", {}, h("div", { class: "who muted" }, `${entry.action} · ${who(entry.actor)} · ${when(entry.at)}`), h("div", {}, entry.changes.map((change) => change.field).join(", "))),
       ))),
     ),
   );

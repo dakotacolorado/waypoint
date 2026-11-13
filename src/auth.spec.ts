@@ -26,7 +26,7 @@ describe("Tokens", () => {
     const db = new DatabaseSync(":memory:");
     const tokens = new Tokens(db, "from-env");
     expect(tokens.hasAdmin()).toBe(true);
-    expect(tokens.caller("from-env")).toEqual({ name: "admin", admin: true });
+    expect(tokens.caller("from-env")).toEqual({ name: null, admin: true });
     expect(tokens.list()).toEqual([]);
     expect(new Tokens(db).hasAdmin()).toBe(false);
   });
