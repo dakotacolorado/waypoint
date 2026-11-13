@@ -80,3 +80,6 @@ ul.card-subtasks .sub-done .mark { color: var(--ok); }
 ul.card-subtasks .sub-in_progress .mark, ul.card-subtasks .sub-review .mark { color: var(--accent); }
 ul.card-subtasks .badge { flex: none; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.card .waits { display: none; font-size: 12px; color: var(--bad); margin-top: 4px; }
+.card:hover .waits, .card:focus-visible .waits { display: block; }
+.waits-on { color: var(--bad); font-size: 13px; margin-top: 6px; }

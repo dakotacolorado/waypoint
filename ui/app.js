@@ -20,7 +20,7 @@ function h(tag, props = {}, ...children) {
     else if (value === true) el.setAttribute(key, "");
     else el.setAttribute(key, value);
   }
-  for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) el.append(child instanceof Node ? child : String(child));
+  for (const child of children.flat(Infinity)) if (child !== null && child !== undefined && child !== false) el.append(child instanceof Node ? child : String(child));
   return el;
 }
 
@@ -68,6 +68,7 @@ class ApiError extends Error {
   constructor(status, body) {
     super(body?.message ?? `HTTP ${status}`);
     this.status = status;
+    this.body = body ?? {};
   }
 }
 
@@ -110,13 +111,17 @@ const show = (box, err) => {
   box.textContent = err.message;
 };
 
-/** Runs `fn`, showing what refused it in `box`, then redraws the page. */
-async function act(box, fn) {
+/**
+ * Runs `fn`, then redraws the page. If it is refused, `undo` puts the control that asked back to
+ * the stored value, and `box` says why, in `explain`'s words when given.
+ */
+async function act(box, fn, { undo, explain } = {}) {
   try {
     await fn();
     route();
   } catch (err) {
-    show(box, err);
+    undo?.();
+    show(box, explain && err instanceof ApiError ? { message: explain(err) } : err);
   }
 }
 
@@ -146,7 +151,7 @@ function subtaskList(task) {
         h("span", { class: "mark", title: label(sub.status), "aria-hidden": "true" }, SUBTASK_MARKS[sub.status]),
         h("span", { class: "sr" }, `${label(sub.status)}: `),
         h("span", { class: sub.status === "cancelled" ? "struck" : "" }, sub.title),
-        sub.blockedBy.length > 0 && h("span", { class: "badge blocked", title: `waits on ${sub.blockedBy.join(", ")}` }, "blocked"),
+        sub.blockedBy.length > 0 && h("span", { class: "badge blocked", title: `waits on ${sub.blockedBy.map((id) => `${id} ${task.subtasks.find((each) => each.id === id)?.title ?? ""}`).join("; ")}` }, "blocked"),
       ),
     ),
   );
@@ -188,6 +193,8 @@ async function board(params) {
   const withSubtasks = params.get("subtasks") === "1";
   const [tasks, labelList] = await Promise.all([all(`/tasks${cancelled ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
   const labels = new Map(labelList.map((each) => [each.id, each]));
+  const byId = new Map(tasks.map((each) => [each.id, each]));
+  const named = (id) => (byId.has(id) ? `${byId.get(id).shortId} ${byId.get(id).title}` : id.slice(0, 8));
   const shown = tasks.filter((task) => !only || task.labels.includes(only));
   const set = (key, value) => {
     const next = new URLSearchParams(params);
@@ -213,7 +220,7 @@ async function board(params) {
       here.map((task) =>
         h(
           "a",
-          { class: "card", href: `#/task/${task.shortId}` },
+          { class: "card", href: `#/task/${task.shortId}`, title: task.blockedBy.length ? `Waits on ${task.blockedBy.map(named).join("; ")}` : undefined },
           h("div", { class: "title" }, task.title),
           h(
             "div",
@@ -225,6 +232,7 @@ async function board(params) {
             progress(task) && h("span", {}, `· ${progress(task)}`),
             chips(task, labels),
           ),
+          task.blockedBy.length > 0 && h("div", { class: "waits" }, `Waits on ${task.blockedBy.map(named).join("; ")}`),
           withSubtasks && task.subtasks.length > 0 && subtaskList(task),
         ),
       ),
@@ -280,8 +288,20 @@ async function taskPage(ref) {
     const other = byId.get(id);
     return other ? h("a", { href: `#/task/${other.shortId}` }, `${other.shortId} ${other.title}`, h("span", { class: "muted" }, ` · ${label(other.status)}`)) : h("span", { class: "muted" }, id.slice(0, 8));
   };
+  const subtask = (id) => task.subtasks.find((sub) => sub.id === id);
+  /** A refusal with what it names listed by text and title: the API names them by id alone. */
+  const explain = (err) => {
+    const { unmetCriteria = [], openSubtasks = [], blockedBy = [] } = err.body;
+    const named = [
+      ...unmetCriteria.map((id) => `${id} ${task.criteria.find((criterion) => criterion.id === id)?.text ?? ""}`),
+      ...openSubtasks.map((id) => `${id} ${subtask(id)?.title ?? ""}`),
+      ...blockedBy.map((id) => (byId.has(id) ? `${byId.get(id).shortId} ${byId.get(id).title}` : `${id} ${subtask(id)?.title ?? ""}`)),
+    ];
+    return [err.message, ...named.map((line) => `• ${line}`)].join("\n");
+  };
   const box = errorBox();
-  const update = (changes) => act(box, () => api("PATCH", `/tasks/${task.id}`, changes));
+  /** `undo` puts the control that asked back to the stored value if the change is refused. */
+  const update = (changes, undo, where = box) => act(where, () => api("PATCH", `/tasks/${task.id}`, changes), { undo, explain });
 
   const head = h(
     "div",
@@ -296,21 +316,22 @@ async function taskPage(ref) {
       task.blockedBy.length > 0 && h("span", { class: "badge blocked" }, `blocked by ${task.blockedBy.length}`),
       chips(task, labels),
     ),
-    box,
+    task.blockedBy.length > 0 && h("div", { class: "waits-on" }, "Waits on ", task.blockedBy.map((id, at) => [at > 0 && ", ", link(id)])),
     h(
       "div",
       { class: "row" },
-      h("select", { onchange: (e) => update({ status: e.target.value }) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
+      h("select", { onchange: (e) => update({ status: e.target.value }, () => (e.target.value = task.status)) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
       CLOSED.includes(task.status)
         ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
         : [h("button", { onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
       h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
     ),
+    box,
     h(
       "div",
       { class: "row" },
       h("span", { class: "muted" }, "Assignee"),
-      h("input", { value: task.assignee ?? "", placeholder: "no one", onchange: (e) => update({ assignee: e.target.value.trim() || null }) }),
+      h("input", { value: task.assignee ?? "", placeholder: "no one", onchange: (e) => update({ assignee: e.target.value.trim() || null }, () => (e.target.value = task.assignee ?? "")) }),
     ),
   );
 
@@ -337,7 +358,8 @@ async function taskPage(ref) {
                   type: "checkbox",
                   checked: criterion.met,
                   // Only this entry says `met`, so a tick another caller makes meanwhile stands.
-                  onchange: (e) => update({ criteria: task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, met: e.target.checked } : { id: each.id })) }),
+                  onchange: (e) =>
+                    update({ criteria: task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, met: e.target.checked } : { id: each.id })) }, () => (e.target.checked = criterion.met)),
                 }),
                 h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${who(criterion.metBy)}, ${when(criterion.metAt)}`)),
               ),
@@ -352,13 +374,13 @@ async function taskPage(ref) {
   const subtaskRow = (sub) => {
     const li = h("li", { class: "subtask" });
     const rowBox = errorBox();
-    const send = (list) => act(rowBox, () => api("PATCH", `/tasks/${task.id}`, { subtasks: list }));
+    const send = (list, undo) => update({ subtasks: list }, undo, rowBox);
     const view = () =>
       fill(
         li,
         h(
           "select",
-          { onchange: (e) => update({ subtasks: subtasksWith(sub, { status: e.target.value }) }) },
+          { onchange: (e) => send(subtasksWith(sub, { status: e.target.value }), () => (e.target.value = sub.status)) },
           STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
         ),
         h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
@@ -394,7 +416,7 @@ async function taskPage(ref) {
           onclick: () => {
             const editor = subtaskEditor(null, {
               saveText: "Add",
-              onSave: (value) => act(addBox, () => api("PATCH", `/tasks/${task.id}`, { subtasks: [...keep, value] })),
+              onSave: (value) => update({ subtasks: [...keep, value] }, undefined, addBox),
               onCancel: addButton,
             });
             adding.replaceChildren(editor.el, addBox);
