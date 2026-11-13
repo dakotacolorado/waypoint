@@ -127,16 +127,16 @@ function merged<T extends { id: string }, I extends { id?: string }>(
   given: I[],
   current: T[],
   prefix: string,
-  what: string,
+  what: [one: string, many: string],
   fresh: (input: I, id: string) => T,
   update: (existing: T, input: I) => T,
 ): T[] {
   const known = new Map(current.map((each) => [each.id, each]));
   const ids = given.flatMap((each) => (each.id === undefined ? [] : [each.id]));
   const unknown = ids.filter((id) => !known.has(id));
-  if (unknown.length) throw new ValidationError(`the task has no ${what} ${unknown.join(", ")}`);
+  if (unknown.length) throw new ValidationError(`the task has no ${counted(unknown, ...what)}`);
   const twice = ids.filter((id, at) => ids.indexOf(id) !== at);
-  if (twice.length) throw new ValidationError(`${what} ${twice[0]} is given twice`);
+  if (twice.length) throw new ValidationError(`${what[0]} ${twice[0]} is given twice`);
   let next = Math.max(0, ...current.map((each) => Number(each.id.slice(prefix.length))));
   return given.map((each) => (each.id === undefined ? fresh(each, `${prefix}${++next}`) : update(known.get(each.id)!, each)));
 }
@@ -148,7 +148,7 @@ export function criteriaFrom(given: CriterionInput[], current: Criterion[], acto
     given,
     current,
     "c",
-    "criterion",
+    ["criterion", "criteria"],
     (input, id) => {
       if (!input.text) throw new ValidationError("a new criterion needs its text");
       return met({ id, text: input.text, met: false, metBy: null, metAt: null }, input.met);
@@ -162,7 +162,7 @@ export function subtasksFrom(given: SubtaskInput[], current: Subtask[]): Subtask
     given,
     current,
     "s",
-    "subtask",
+    ["subtask", "subtasks"],
     (input, id) => {
       if (!input.title) throw new ValidationError("a new subtask needs its title");
       return { id, title: input.title, description: input.description ?? "", status: input.status ?? "backlog", dependsOn: input.dependsOn ?? [] };
@@ -173,6 +173,13 @@ export function subtasksFrom(given: SubtaskInput[], current: Subtask[]): Subtask
     }),
   );
 }
+
+/** `ids` after their noun, which agrees with how many there are: "criterion c1", "criteria c1, c2". */
+const counted = (ids: string[], one: string, many: string) => `${ids.length === 1 ? one : many} ${ids.join(", ")}`;
+
+/** "a is blocked by b: close it first", agreeing in number with `blockers`. */
+const blockedMessage = (what: string, blockers: string[]) =>
+  `${what} is blocked by ${blockers.join(", ")}: close ${blockers.length === 1 ? "it" : "them"} first`;
 
 /** Those of `ids` that `status` says are not closed. */
 const open = (ids: string[], status: (id: string) => Status | undefined) => ids.filter((id) => !CLOSED.includes(status(id) ?? "done"));
@@ -289,14 +296,14 @@ export class Tasks {
     if (next.status !== before?.status && STARTED.includes(next.status)) {
       const blocked = after.blockedBy(next);
       if (blocked.length) {
-        throw new ConflictError(`${after.shortId(next.id)} waits on ${blocked.map((id) => after.shortId(id)).join(", ")}: each must be closed first`, { blockedBy: blocked });
+        throw new ConflictError(blockedMessage(after.shortId(next.id), blocked.map((id) => after.shortId(id))), { blockedBy: blocked });
       }
     }
     if (next.status === "done") {
       const unmet = next.criteria.filter((criterion) => !criterion.met).map((criterion) => criterion.id);
-      if (unmet.length) throw new ConflictError(`the task can't be done while criteria ${unmet.join(", ")} are unmet`, { unmetCriteria: unmet });
+      if (unmet.length) throw new ConflictError(`the task can't be done while ${counted(unmet, "criterion", "criteria")} ${unmet.length === 1 ? "is" : "are"} unmet`, { unmetCriteria: unmet });
       const openSubtasks = open(next.subtasks.map((sub) => sub.id), (id) => next.subtasks.find((sub) => sub.id === id)?.status);
-      if (openSubtasks.length) throw new ConflictError(`the task can't be done while subtasks ${openSubtasks.join(", ")} are open`, { openSubtasks });
+      if (openSubtasks.length) throw new ConflictError(`the task can't be done while ${counted(openSubtasks, "subtask", "subtasks")} ${openSubtasks.length === 1 ? "is" : "are"} open`, { openSubtasks });
     }
   }
 
@@ -313,7 +320,7 @@ export class Tasks {
     }
     for (const sub of subtaskViews(next)) {
       if (sub.status !== was.get(sub.id)?.status && STARTED.includes(sub.status) && sub.blockedBy.length) {
-        throw new ConflictError(`subtask ${sub.id} waits on ${sub.blockedBy.join(", ")}: each must be closed first`, { blockedBy: sub.blockedBy });
+        throw new ConflictError(blockedMessage(`subtask ${sub.id}`, sub.blockedBy), { blockedBy: sub.blockedBy });
       }
     }
   }
@@ -321,6 +328,9 @@ export class Tasks {
   /** Throws while another task depends on `id`. */
   checkDelete(id: string): void {
     const dependents = this.all().filter((task) => task.dependsOn.includes(id));
-    if (dependents.length) throw new ConflictError(`${dependents.map((task) => this.shortId(task.id)).join(", ")} depend on ${this.shortId(id)}`);
+    if (dependents.length) {
+      const names = dependents.map((task) => this.shortId(task.id)).join(", ");
+      throw new ConflictError(`${names} ${dependents.length === 1 ? "depends" : "depend"} on ${this.shortId(id)}: remove the dependency first`);
+    }
   }
 }

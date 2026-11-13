@@ -73,28 +73,58 @@ describe("tasks", () => {
     expect(second).toMatchObject({ ready: false, blockedBy: [first.id] });
     expect(await update(second.id, { status: "in_progress" })).toEqual({
       status: 409,
-      body: { code: "ConflictException", message: expect.stringContaining("waits on"), blockedBy: [first.id] },
+      body: { code: "ConflictException", message: `${second.shortId} is blocked by ${first.shortId}: close it first`, blockedBy: [first.id] },
     });
     await update(first.id, { status: "done" });
     expect((await update(second.id, { status: "in_progress" })).status).toBe(200);
   });
 
-  it("refuses done with an unmet criterion or an open subtask, naming them", async () => {
-    const task = await create({ title: "t", criteria: [{ text: "works" }], subtasks: [{ title: "step" }] });
-    expect((await update(task.id, { status: "done" })).body).toMatchObject({ code: "ConflictException", unmetCriteria: ["c1"] });
-    await update(task.id, { criteria: [{ id: "c1", met: true }] });
-    expect((await update(task.id, { status: "done" })).body).toMatchObject({ code: "ConflictException", openSubtasks: ["s1"] });
+  it("refuses done with an unmet criterion or an open subtask, naming them in a sentence that agrees in number", async () => {
+    const task = await create({ title: "t", criteria: [{ text: "works" }, { text: "fast" }], subtasks: [{ title: "step" }] });
+    expect((await update(task.id, { status: "done" })).body).toEqual({
+      code: "ConflictException",
+      message: "the task can't be done while criteria c1, c2 are unmet",
+      unmetCriteria: ["c1", "c2"],
+    });
+    await update(task.id, { criteria: [{ id: "c1", met: true }, { id: "c2" }] });
+    expect((await update(task.id, { status: "done" })).body).toMatchObject({ message: "the task can't be done while criterion c2 is unmet", unmetCriteria: ["c2"] });
+    await update(task.id, { criteria: [{ id: "c1" }, { id: "c2", met: true }] });
+    expect((await update(task.id, { status: "done" })).body).toEqual({
+      code: "ConflictException",
+      message: "the task can't be done while subtask s1 is open",
+      openSubtasks: ["s1"],
+    });
   });
 
   it("refuses to delete a task another depends on", async () => {
     const first = await create({ title: "first" });
-    await create({ title: "second", dependsOn: [first.id] });
-    expect((await call("DELETE", `/tasks/${first.id}`)).body).toMatchObject({ code: "ConflictException" });
+    const second = await create({ title: "second", dependsOn: [first.id] });
+    expect((await call("DELETE", `/tasks/${first.id}`)).body).toEqual({
+      code: "ConflictException",
+      message: `${second.shortId} depends on ${first.shortId}: remove the dependency first`,
+    });
+    const third = await create({ title: "third", dependsOn: [first.id] });
+    expect((await call("DELETE", `/tasks/${first.id}`)).body).toMatchObject({ message: `${second.shortId}, ${third.shortId} depend on ${first.shortId}: remove the dependency first` });
   });
 
-  it("answers a malformed request with ValidationException", async () => {
-    expect((await call("POST", "/tasks", { description: "no title" })).body).toMatchObject({ code: "ValidationException" });
-    expect((await call("PATCH", `/tasks/${(await create({ title: "t" })).id}`, {})).body).toMatchObject({ code: "ValidationException" });
+  it("answers a malformed request with ValidationException, in plain words naming the field", async () => {
+    const refused = async (method: string, path: string, body: unknown) => {
+      const { status, body: answer } = await call(method, path, body);
+      expect(status).toBe(400);
+      expect(answer).toEqual({ code: "ValidationException", message: expect.any(String) });
+      expect(answer!.message).not.toMatch(/Invalid input|nonoptional|expected/);
+      return answer!.message;
+    };
+    const task = await create({ title: "t" });
+    expect(await refused("POST", "/tasks", { description: "no title" })).toBe("title is required");
+    expect(await refused("POST", "/tasks", { title: "" })).toBe("title can't be empty");
+    expect(await refused("POST", "/tasks", { title: 5 })).toBe("title must be text");
+    expect(await refused("POST", "/tasks", { title: "x".repeat(201) })).toBe("title can be at most 200 characters");
+    expect(await refused("POST", "/tasks", { title: "t", status: "nope" })).toBe("status must be one of backlog, in_progress, review, done, cancelled");
+    expect(await refused("POST", "/tasks", { title: "t", subtasks: [{ dependsOn: "s1" }] })).toBe("subtasks[0].dependsOn must be a list");
+    expect(await refused("PATCH", `/tasks/${task.id}`, {})).toBe("no fields given");
+    expect(await refused("POST", "/labels", { name: "x", color: "red" })).toBe("color must be #rrggbb");
+    expect(await refused("GET", "/tasks?maxResults=0", undefined)).toBe("maxResults must be at least 1");
   });
 
   it("returns what the first create made when its clientToken is sent again", async () => {
