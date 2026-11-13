@@ -122,6 +122,8 @@ A write is recorded as its `x-actor` header, else its token's name. `WAYPOINT_AD
 
 `waypoint backup copy.db` takes SQLite's online backup of the database, consistent while it serves.
 
+`waypoint import work-tracker` copies every item from a work-tracker-service (`--from` or `WORK_TRACKER_URL`, its token in `WORK_TRACKER_TOKEN`, read by GET alone) into the database, keeping ids, short ids, timestamps and authors: each epic and story becomes a task, each of a story's tasks a subtask of it, each epic a label `epic:<shortId>` on it and its stories, tags labels, work-log entries comments with their links. Run again, it changes only what changed there, and never a task made or edited in waypoint; it lists short ids that no longer name their item. `--dry-run` writes nothing; `--save file` keeps what it read, which `--source file` imports again.
+
 ## Developing
 
 ```sh
