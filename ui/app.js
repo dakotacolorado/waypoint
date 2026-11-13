@@ -81,7 +81,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
-    route();
+    signIn("This browser's token is no longer one this server knows: sign in again.");
     throw new ApiError(401, { message: "That token is not one this server knows." });
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
@@ -180,23 +180,30 @@ function subtaskList(task) {
   );
 }
 
-function signIn() {
+/** The sign-in form, saying `why` when a token this browser had was refused. */
+function signIn(why) {
   signout.hidden = true;
-  const input = h("input", { type: "password", placeholder: "wp_…", style: "width:100%", autocomplete: "off" });
+  const input = h("input", { type: "password", placeholder: "wp_…", style: "width:100%", autocomplete: "off", "aria-label": "Token" });
   const box = errorBox();
+  if (why) show(box, { message: why });
   const form = h(
     "form",
     {
       class: "panel",
       onsubmit: async (event) => {
         event.preventDefault();
-        localStorage.setItem(TOKEN_KEY, input.value.trim());
+        const typed = input.value.trim();
+        if (!typed) return show(box, { message: "Paste a token first." });
+        // Checked here rather than through api(), whose answer to a 401 is to draw this form afresh.
         try {
-          await api("GET", "/labels?maxResults=1");
-          route();
-        } catch (err) {
-          show(box, err);
+          const res = await fetch("labels?maxResults=1", { headers: { authorization: `Bearer ${typed}` } });
+          if (res.status === 401) return show(box, { message: "That token is not one this server knows." });
+          if (!res.ok) return show(box, new ApiError(res.status, await res.json().catch(() => null)));
+        } catch {
+          return show(box, { message: "The server did not answer: is it running?" });
         }
+        localStorage.setItem(TOKEN_KEY, typed);
+        route();
       },
     },
     h("h2", {}, "Sign in"),
@@ -209,7 +216,12 @@ function signIn() {
   input.focus();
 }
 
+const BOARD_KEY = "waypoint.board";
+/** The board as the person last left it, filters and all. */
+const lastBoard = () => sessionStorage.getItem(BOARD_KEY) ?? "#/";
+
 async function board(params) {
+  sessionStorage.setItem(BOARD_KEY, `#/${params.size ? `?${params}` : ""}`);
   // Older links carry `closed=1`.
   const cancelled = params.get("cancelled") === "1" || params.get("closed") === "1";
   const only = params.get("label") ?? "";
@@ -436,6 +448,16 @@ async function taskPage(ref) {
   };
   const box = errorBox();
   const labelBox = errorBox();
+  const deleteTask = async () => {
+    if (!confirm(`Delete task ${task.shortId} "${task.title}"? Its subtasks, criteria, comments and history go with it.`)) return;
+    try {
+      await api("DELETE", `/tasks/${task.id}`);
+      location.hash = lastBoard();
+    } catch (err) {
+      const dependents = tasks.filter((other) => other.dependsOn.includes(task.id));
+      show(box, { message: [err.message, ...(err.status === 409 ? dependents.map((other) => `• ${other.shortId} ${other.title}`) : [])].join("\n") });
+    }
+  };
   /** `undo` puts the control that asked back to the stored value if the change is refused. */
   const update = (changes, undo, where = box) => act(where, () => api("PATCH", `/tasks/${task.id}`, changes), { undo, explain });
 
@@ -460,6 +482,7 @@ async function taskPage(ref) {
         ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
         : [h("button", { onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
       h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
+      h("button", { class: "danger", onclick: deleteTask }, "Delete"),
     ),
     box,
     h(
@@ -669,7 +692,7 @@ async function taskPage(ref) {
       ))),
     ),
   );
-  main.replaceChildren(h("div", { class: "item" }, h("div", {}, head, description, criteria, subtasks, talk), side));
+  main.replaceChildren(h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: lastBoard() }, "Board"), " / ", task.shortId), h("div", { class: "item" }, h("div", {}, head, description, criteria, subtasks, talk), side));
 }
 
 async function labelsPage() {
@@ -829,7 +852,7 @@ async function newTask() {
       h("label", {}, "Subtasks, one a line"),
       subtasks,
       box,
-      h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Create")),
+      h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Create"), h("a", { href: lastBoard() }, "Cancel")),
     ),
   );
 }
