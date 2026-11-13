@@ -1,7 +1,7 @@
 // waypoint's page: the board, a task, and a form for a new one, over the API.
 // Every element is made with `h`, which sets text, never HTML, so nothing a task says is run.
 
-import { LETTERS, PIN_SVG, STATUSES, SUMMARY, TAGLINE } from "./banner.js";
+import { LETTERS, MARK_PIXEL_SVG, MARK_SVG, STATUSES, SUMMARY, TAGLINE } from "./banner.js";
 
 const OPEN = STATUSES.filter((status) => status !== "cancelled");
 const CLOSED = ["done", "cancelled"];
@@ -32,11 +32,15 @@ const who = (actor) => actor ?? "env admin token";
 /** Where this page is served, as `https://host:8444/`: the base of the API and the MCP server too. */
 const base = () => `${location.origin}${location.pathname}`;
 
-/** The block-letter name with the pin beside it. The SVG is the server's own constant, not anything a task says. */
+/** One of the server's own SVG constants as an element: never anything a task says. */
+const svg = (source) => document.importNode(new DOMParser().parseFromString(source, "image/svg+xml").documentElement, true);
+
+/** The block-letter name with the pixel mark beside it. */
 function wordmark(small = false) {
-  const pin = new DOMParser().parseFromString(PIN_SVG, "image/svg+xml").documentElement;
-  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), document.importNode(pin, true));
+  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), svg(MARK_PIXEL_SVG));
 }
+
+document.querySelector("header .brand").prepend(svg(MARK_SVG));
 
 function landing(small) {
   return h(
