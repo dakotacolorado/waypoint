@@ -64,7 +64,6 @@ a.wordmark { display: flex; align-items: flex-end; gap: 1.4em; width: fit-conten
 a.wordmark:hover { text-decoration: none; opacity: .85; }
 a.wordmark pre { margin: 0; font: 1em/1 ui-monospace, "Cascadia Mono", Menlo, monospace; white-space: pre; }
 a.wordmark svg { height: 6em; width: auto; flex: none; }
-a.wordmark.small { font-size: clamp(3px, .7vw, 6px); margin: 0 0 8px; }
 .landing { margin-bottom: 18px; }
 .landing .tagline { font-size: 17px; font-weight: 600; margin: 4px 0; }
 .landing p { margin: 2px 0; }

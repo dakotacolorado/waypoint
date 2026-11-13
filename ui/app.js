@@ -36,17 +36,17 @@ const base = () => `${location.origin}${location.pathname}`;
 const svg = (source) => document.importNode(new DOMParser().parseFromString(source, "image/svg+xml").documentElement, true);
 
 /** The block-letter name with the pixel mark beside it. */
-function wordmark(small = false) {
-  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), svg(MARK_PIXEL_SVG));
+function wordmark() {
+  return h("a", { class: "wordmark", href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), svg(MARK_PIXEL_SVG));
 }
 
 document.querySelector("header .brand").prepend(svg(MARK_SVG));
 
-function landing(small) {
+function landing() {
   return h(
     "div",
     { class: "landing" },
-    wordmark(small),
+    wordmark(),
     h("p", { class: "tagline" }, TAGLINE),
     h("p", { class: "muted" }, SUMMARY),
     h(
@@ -212,7 +212,7 @@ function signIn(why) {
     box,
     h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Sign in")),
   );
-  main.replaceChildren(h("div", { class: "signin" }, landing(false), form));
+  main.replaceChildren(h("div", { class: "signin" }, landing(), form));
   input.focus();
 }
 
@@ -226,27 +226,49 @@ async function board(params) {
   const cancelled = params.get("cancelled") === "1" || params.get("closed") === "1";
   const only = params.get("label") ?? "";
   const withSubtasks = params.get("subtasks") === "1";
+  const readyOnly = params.get("ready") === "1";
+  const unassigned = params.get("unassigned") === "1";
+  const assignee = params.get("assignee") ?? "";
   const [tasks, labelList] = await Promise.all([all(`/tasks${cancelled ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
   const labels = new Map(labelList.map((each) => [each.id, each]));
   const byId = new Map(tasks.map((each) => [each.id, each]));
   const named = (id) => (byId.has(id) ? `${byId.get(id).shortId} ${byId.get(id).title}` : id.slice(0, 8));
-  const shown = tasks.filter((task) => !only || task.labels.includes(only));
-  const set = (key, value) => {
+  const shown = tasks.filter(
+    (task) =>
+      (!only || task.labels.includes(only)) &&
+      (!readyOnly || task.ready) &&
+      (!unassigned || task.assignee === null) &&
+      (!assignee || task.assignee === assignee),
+  );
+  const assignees = [...new Set([...tasks.map((task) => task.assignee).filter(Boolean), ...(assignee ? [assignee] : [])])].sort();
+  /** The board with `changes` made to its filters; an empty value drops one. */
+  const set = (changes) => {
     const next = new URLSearchParams(params);
     next.delete("closed");
-    if (value) next.set(key, value);
-    else next.delete(key);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
     location.hash = `#/?${next}`;
   };
+  const UNASSIGNED = "\u0000unassigned";
   const filters = h(
     "div",
     { class: "filters" },
     labelList.length
-      ? h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name)))
+      ? h("select", { "aria-label": "Label", onchange: (e) => set({ label: e.target.value }) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name)))
       : h("a", { href: "#/labels" }, "No labels yet: make one"),
-    h("label", { class: "check" }, h("input", { type: "checkbox", checked: cancelled, onchange: (e) => set("cancelled", e.target.checked ? "1" : "") }), "Show cancelled"),
-    h("label", { class: "check" }, h("input", { type: "checkbox", checked: withSubtasks, onchange: (e) => set("subtasks", e.target.checked ? "1" : "") }), "Show subtasks"),
-    h("span", { class: "muted" }, `${shown.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: cancelled, onchange: (e) => set({ cancelled: e.target.checked ? "1" : "" }) }), "Show cancelled"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: withSubtasks, onchange: (e) => set({ subtasks: e.target.checked ? "1" : "" }) }), "Show subtasks"),
+    h(
+      "select",
+      { "aria-label": "Assignee", onchange: (e) => set(e.target.value === UNASSIGNED ? { assignee: "", unassigned: "1" } : { assignee: e.target.value, unassigned: "" }) },
+      h("option", { value: "" }, "Anyone"),
+      h("option", { value: UNASSIGNED, selected: unassigned }, "Unassigned"),
+      assignees.map((name) => h("option", { value: name, selected: name === assignee }, name)),
+    ),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: readyOnly, onchange: (e) => set({ ready: e.target.checked ? "1" : "" }) }), "Ready only"),
+    h("span", { class: "muted" }, `${shown.length} of ${tasks.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
   );
   const columns = (cancelled ? STATUSES : OPEN).map((status) => {
     const here = shown.filter((task) => task.status === status);
@@ -275,7 +297,7 @@ async function board(params) {
       ),
     );
   });
-  main.replaceChildren(landing(true), filters, h("div", { class: `board cols-${columns.length}` }, columns));
+  main.replaceChildren(filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
 
 const LIST_ITEM = /^\s*([-*]|\d+\.)\s+/;
