@@ -5,12 +5,14 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Tokens } from "./auth.ts";
-import { banner } from "./banner.ts";
+import { banner, SUMMARY, TAGLINE } from "./banner.ts";
 import { PACKAGE_VERSION } from "./build.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
 
-const USAGE = `waypoint v${PACKAGE_VERSION}: a task tracker for people and agents, over HTTP, on SQLite.
+const USAGE = `waypoint v${PACKAGE_VERSION}
+${TAGLINE}
+${SUMMARY}
 
 Usage:
   waypoint [serve] [options]              run the server

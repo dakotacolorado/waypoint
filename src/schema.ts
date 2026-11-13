@@ -30,7 +30,7 @@ export const ErrorSchema = z
       .enum(["ValidationException", "UnauthorizedException", "ResourceNotFoundException", "ConflictException", "InternalServerException"])
       .describe("What kind of error it is."),
     message: z.string().describe("What went wrong."),
-    blockedBy: z.array(z.string()).optional().describe("The open tasks, or subtasks, it waits on."),
+    blockedBy: z.array(z.string()).optional().describe("The open tasks, or subtasks, it is blocked by."),
     unmetCriteria: z.array(z.string()).optional().describe("The criteria not yet met."),
     openSubtasks: z.array(z.string()).optional().describe("The IDs of the subtasks not yet closed."),
     matches: z.array(z.string()).optional().describe("The task IDs a short ID matches."),
@@ -80,7 +80,7 @@ export const SubtaskSchema = z
     title: z.string().describe("A short name for the step."),
     description: z.string().describe("What the step is, in Markdown."),
     status: Status,
-    dependsOn: z.array(z.string()).describe("The IDs of the subtasks of the same task this one waits on."),
+    dependsOn: z.array(z.string()).describe("The IDs of the subtasks of the same task this one depends on."),
     blockedBy: z.array(z.string()).describe("The subtasks in `dependsOn` that aren't closed yet."),
   })
   .openapi("Subtask");
@@ -92,7 +92,7 @@ export const TaskSchema = z
     title: z.string().describe("A short name for the task."),
     description: z.string().describe("What the task is, in Markdown."),
     status: Status,
-    dependsOn: z.array(z.string()).describe("The IDs of the tasks this one waits on."),
+    dependsOn: z.array(z.string()).describe("The IDs of the tasks this one depends on."),
     subtasks: z.array(SubtaskSchema).describe("The steps of the work, in order. The task can't be `done` until each is closed."),
     criteria: z.array(CriterionSchema).describe("The acceptance criteria, in order. The task can't be `done` until each is met."),
     labels: z.array(z.string()).describe("The IDs of its labels."),
@@ -120,7 +120,7 @@ const SubtaskInput = z
     title: z.string().trim().min(1).max(200).optional().describe("A short name for the step. Required for a new subtask."),
     description: z.string().max(20_000).optional().describe("What the step is, in Markdown."),
     status: Status.optional().describe("Where the step stands. Omit it to leave it as it stands when the write lands; a new subtask starts in `backlog`."),
-    dependsOn: z.array(z.string()).max(50).optional().describe("The IDs of subtasks of the same task this one waits on."),
+    dependsOn: z.array(z.string()).max(50).optional().describe("The IDs of subtasks of the same task this one depends on."),
   })
   .openapi("SubtaskInput");
 
@@ -128,7 +128,7 @@ const TaskFields = {
   title: z.string().trim().min(1).max(200).describe("A short name for the task."),
   description: z.string().max(20_000).describe("What the task is, in Markdown."),
   status: Status,
-  dependsOn: z.array(z.string()).max(50).describe("The IDs of the tasks this one waits on."),
+  dependsOn: z.array(z.string()).max(50).describe("The IDs of the tasks this one depends on."),
   subtasks: z
     .array(SubtaskInput)
     .max(MAX_SUBTASKS)

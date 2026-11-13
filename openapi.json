@@ -3,7 +3,7 @@
   "info": {
     "title": "waypoint",
     "version": "2026-11-12",
-    "description": "A task tracker with dependency and status management. Tasks can wait on other tasks, and the service keeps a task from being started before what it waits on is closed, or finished before its acceptance criteria are met.\n\n- `status` is one of `backlog`, `in_progress`, `review`, `done` or `cancelled`. `done` and `cancelled` are the closed statuses.\n- A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.\n- A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.\n- A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.\n- Cancelled tasks count as closed and are left out of lists unless asked for.\n\nEvery request but `GetHealth` takes `Authorization: Bearer <token>`. A write is recorded as its `x-actor` header, else its token's name. Errors are `{code, message}`."
+    "description": "A task tracker with dependency and status management. A task depends on other tasks, and the service keeps it from being started while it is blocked by one still open, or finished before its acceptance criteria are met.\n\n- `status` is one of `backlog`, `in_progress`, `review`, `done` or `cancelled`. `done` and `cancelled` are the closed statuses.\n- A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.\n- A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.\n- A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.\n- Cancelled tasks count as closed and are left out of lists unless asked for.\n\nEvery request but `GetHealth` takes `Authorization: Bearer <token>`. A write is recorded as its `x-actor` header, else its token's name. Errors are `{code, message}`."
   },
   "tags": [
     {
@@ -85,7 +85,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the tasks this one waits on."
+            "description": "The IDs of the tasks this one depends on."
           },
           "subtasks": {
             "type": "array",
@@ -183,7 +183,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the subtasks of the same task this one waits on."
+            "description": "The IDs of the subtasks of the same task this one depends on."
           },
           "blockedBy": {
             "type": "array",
@@ -263,7 +263,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The open tasks, or subtasks, it waits on."
+            "description": "The open tasks, or subtasks, it is blocked by."
           },
           "unmetCriteria": {
             "type": "array",
@@ -334,7 +334,7 @@
               "type": "string"
             },
             "maxItems": 50,
-            "description": "The IDs of the tasks this one waits on."
+            "description": "The IDs of the tasks this one depends on."
           },
           "subtasks": {
             "type": "array",
@@ -415,7 +415,7 @@
               "type": "string"
             },
             "maxItems": 50,
-            "description": "The IDs of subtasks of the same task this one waits on."
+            "description": "The IDs of subtasks of the same task this one depends on."
           }
         }
       },
@@ -469,7 +469,7 @@
               "type": "string"
             },
             "maxItems": 50,
-            "description": "The IDs of the tasks this one waits on."
+            "description": "The IDs of the tasks this one depends on."
           },
           "subtasks": {
             "type": "array",

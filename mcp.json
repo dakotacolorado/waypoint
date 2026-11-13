@@ -1,5 +1,5 @@
 {
-  "instructions": "waypoint is a task tracker with dependency and status management.\n\n- status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.\n- A task is ready when it is in backlog and every task it depends on is closed.\n- A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.\n- In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.\n- A task ID may be given as its shortId.",
+  "instructions": "waypoint: A task tracker with dependency and status management.\n\n- status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.\n- A task depends on the tasks in its dependsOn, and is blocked by those still open (blockedBy). It is ready when it is in backlog and every task it depends on is closed.\n- A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.\n- In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.\n- A task ID may be given as its shortId.",
   "tools": [
     {
       "name": "list_tasks",
@@ -91,7 +91,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the tasks this one waits on."
+            "description": "The IDs of the tasks this one depends on."
           },
           "subtasks": {
             "maxItems": 50,
@@ -126,7 +126,7 @@
                   ]
                 },
                 "dependsOn": {
-                  "description": "The IDs of subtasks of the same task this one waits on.",
+                  "description": "The IDs of subtasks of the same task this one depends on.",
                   "maxItems": 50,
                   "type": "array",
                   "items": {
@@ -268,7 +268,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the tasks this one waits on."
+            "description": "The IDs of the tasks this one depends on."
           },
           "subtasks": {
             "maxItems": 50,
@@ -303,7 +303,7 @@
                   ]
                 },
                 "dependsOn": {
-                  "description": "The IDs of subtasks of the same task this one waits on.",
+                  "description": "The IDs of subtasks of the same task this one depends on.",
                   "maxItems": 50,
                   "type": "array",
                   "items": {

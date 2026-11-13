@@ -1,7 +1,7 @@
 {
   "name": "@dakotajp/waypoint",
   "version": "0.2.0",
-  "description": "A task tracker with dependency and status management: an HTTP API, an MCP server and a web page, on SQLite.",
+  "description": "A task tracker with dependency and status management.",
   "keywords": [
     "task-tracker",
     "dependencies",
