@@ -132,6 +132,26 @@ function progress(task) {
   return `${done} done${cancelled ? `, ${cancelled} cancelled` : ""} of ${task.subtasks.length} subtasks`;
 }
 
+const SUBTASK_MARKS = { backlog: "○", in_progress: "◐", review: "◑", done: "✓", cancelled: "✕" };
+
+/** A card's subtasks as text, since the card is a link: each changes on the task page. */
+function subtaskList(task) {
+  return h(
+    "ul",
+    { class: "card-subtasks" },
+    task.subtasks.map((sub) =>
+      h(
+        "li",
+        { class: `sub-${sub.status}` },
+        h("span", { class: "mark", title: label(sub.status), "aria-hidden": "true" }, SUBTASK_MARKS[sub.status]),
+        h("span", { class: "sr" }, `${label(sub.status)}: `),
+        h("span", { class: sub.status === "cancelled" ? "struck" : "" }, sub.title),
+        sub.blockedBy.length > 0 && h("span", { class: "badge blocked", title: `waits on ${sub.blockedBy.join(", ")}` }, "blocked"),
+      ),
+    ),
+  );
+}
+
 function signIn() {
   signout.hidden = true;
   const input = h("input", { type: "password", placeholder: "wp_…", style: "width:100%", autocomplete: "off" });
@@ -165,6 +185,7 @@ async function board(params) {
   // Older links carry `closed=1`.
   const cancelled = params.get("cancelled") === "1" || params.get("closed") === "1";
   const only = params.get("label") ?? "";
+  const withSubtasks = params.get("subtasks") === "1";
   const [tasks, labelList] = await Promise.all([all(`/tasks${cancelled ? "?includeCancelled=true" : ""}`, "tasks"), all("/labels", "labels")]);
   const labels = new Map(labelList.map((each) => [each.id, each]));
   const shown = tasks.filter((task) => !only || task.labels.includes(only));
@@ -180,6 +201,7 @@ async function board(params) {
     { class: "filters" },
     h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name))),
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: cancelled, onchange: (e) => set("cancelled", e.target.checked ? "1" : "") }), "Show cancelled"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: withSubtasks, onchange: (e) => set("subtasks", e.target.checked ? "1" : "") }), "Show subtasks"),
     h("span", { class: "muted" }, `${shown.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
   );
   const columns = (cancelled ? STATUSES : OPEN).map((status) => {
@@ -203,6 +225,7 @@ async function board(params) {
             progress(task) && h("span", {}, `· ${progress(task)}`),
             chips(task, labels),
           ),
+          withSubtasks && task.subtasks.length > 0 && subtaskList(task),
         ),
       ),
     );

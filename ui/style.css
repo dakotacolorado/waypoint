@@ -73,3 +73,10 @@ button.quiet:hover { border-color: var(--line); }
 .editor textarea { min-height: 60px; }
 .struck { text-decoration: line-through; color: var(--muted); }
 select[multiple] { width: 100%; }
+ul.card-subtasks { list-style: none; padding: 6px 0 0; margin: 6px 0 0; border-top: 1px solid var(--line); font-size: 12px; }
+ul.card-subtasks li { display: flex; gap: 6px; align-items: baseline; overflow-wrap: anywhere; min-width: 0; padding: 1px 0; }
+ul.card-subtasks .mark { flex: none; width: 1em; text-align: center; color: var(--muted); }
+ul.card-subtasks .sub-done .mark { color: var(--ok); }
+ul.card-subtasks .sub-in_progress .mark, ul.card-subtasks .sub-review .mark { color: var(--accent); }
+ul.card-subtasks .badge { flex: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
