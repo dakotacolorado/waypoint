@@ -102,6 +102,8 @@ async function all(path, key) {
 
 const when = (iso) => new Date(iso).toLocaleString();
 const label = (status) => status.replace("_", " ");
+/** `el` holding `children` as `h` would make them. */
+const fill = (el, ...children) => el.replaceChildren(...h("div", {}, ...children).childNodes);
 const errorBox = () => h("div", { class: "error", hidden: true });
 const show = (box, err) => {
   box.hidden = false;
@@ -208,6 +210,39 @@ async function board(params) {
   main.replaceChildren(landing(true), filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
 
+/** Those of `value`'s fields that differ from `sub`'s, so a save sends only what was changed. */
+const changed = (sub, value) => Object.fromEntries(Object.entries(value).filter(([key, each]) => JSON.stringify(each) !== JSON.stringify(sub[key])));
+
+/**
+ * A subtask's title and description, being written. Not a form, so it can sit inside one:
+ * Enter in the title saves and Escape cancels.
+ */
+function subtaskEditor(sub, { onSave, onCancel, saveText = "Save" }) {
+  const title = h("input", { value: sub?.title ?? "", placeholder: "Title", "aria-label": "Subtask title" });
+  const description = h("textarea", { placeholder: "Description (optional)", "aria-label": "Subtask description" });
+  description.value = sub?.description ?? "";
+  const save = () => {
+    if (!title.value.trim()) return title.focus();
+    onSave({ title: title.value.trim(), description: description.value.trim() });
+  };
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") e.preventDefault(), save();
+  });
+  const el = h(
+    "div",
+    {
+      class: "editor",
+      onkeydown: (e) => {
+        if (e.key === "Escape") e.preventDefault(), onCancel();
+      },
+    },
+    title,
+    description,
+    h("div", { class: "row" }, h("button", { type: "button", class: "primary", onclick: save }, saveText), h("button", { type: "button", onclick: onCancel }, "Cancel")),
+  );
+  return { el, focus: () => title.focus() };
+}
+
 async function taskPage(ref) {
   const { task } = await api("GET", `/tasks/${encodeURIComponent(ref)}`);
   const [tasks, labelList, comments, history] = await Promise.all([
@@ -289,37 +324,70 @@ async function taskPage(ref) {
   );
 
   const keep = task.subtasks.map((sub) => ({ id: sub.id }));
-  const newSubtask = h("input", { placeholder: "New subtask", style: "flex:1" });
+  // Every other entry gives only its id, so a change another caller makes to it meanwhile stands.
+  const subtasksWith = (sub, entry) => task.subtasks.map((each) => (each.id === sub.id ? { id: each.id, ...entry } : { id: each.id }));
+  const subtaskRow = (sub) => {
+    const li = h("li", { class: "subtask" });
+    const rowBox = errorBox();
+    const send = (list) => act(rowBox, () => api("PATCH", `/tasks/${task.id}`, { subtasks: list }));
+    const view = () =>
+      fill(
+        li,
+        h(
+          "select",
+          { onchange: (e) => update({ subtasks: subtasksWith(sub, { status: e.target.value }) }) },
+          STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
+        ),
+        h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
+        sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `depends on ${sub.dependsOn.join(", ")}`),
+        h(
+          "span",
+          { class: "actions" },
+          h("button", { type: "button", class: "quiet", onclick: edit, "aria-label": `Edit subtask ${sub.id}` }, "Edit"),
+          h("button", { type: "button", class: "quiet", onclick: remove, "aria-label": `Remove subtask ${sub.id}` }, "Remove"),
+        ),
+        sub.description.trim() && h("div", { class: "muted body" }, sub.description),
+        rowBox,
+      );
+    const edit = () => {
+      const editor = subtaskEditor(sub, { onSave: (value) => send(subtasksWith(sub, changed(sub, value))), onCancel: view });
+      li.replaceChildren(h("span", { class: "muted" }, sub.id), editor.el, rowBox);
+      editor.focus();
+    };
+    const remove = () => {
+      if (confirm(`Remove subtask ${sub.id} "${sub.title}"?`)) send(keep.filter((each) => each.id !== sub.id));
+    };
+    view();
+    return li;
+  };
+  const adding = h("div", {});
+  const addBox = errorBox();
+  const addButton = () =>
+    adding.replaceChildren(
+      h(
+        "button",
+        {
+          type: "button",
+          onclick: () => {
+            const editor = subtaskEditor(null, {
+              saveText: "Add",
+              onSave: (value) => act(addBox, () => api("PATCH", `/tasks/${task.id}`, { subtasks: [...keep, value] })),
+              onCancel: addButton,
+            });
+            adding.replaceChildren(editor.el, addBox);
+            editor.focus();
+          },
+        },
+        "Add subtask",
+      ),
+    );
+  addButton();
   const subtasks = h(
     "div",
     { class: "panel" },
     h("h2", {}, `Subtasks${task.subtasks.length ? ` (${progress(task).replace(/ subtasks$/, "")})` : ""}`),
-    task.subtasks.length === 0
-      ? h("div", { class: "muted" }, "None.")
-      : h(
-          "ul",
-          { class: "plain" },
-          task.subtasks.map((sub) =>
-            h(
-              "li",
-              { class: "subtask" },
-              h(
-                "select",
-                { onchange: (e) => update({ subtasks: task.subtasks.map((each) => (each.id === sub.id ? { id: each.id, status: e.target.value } : { id: each.id })) }) },
-                STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
-              ),
-              h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
-              sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `depends on ${sub.dependsOn.join(", ")}`),
-              sub.description && h("div", { class: "muted body" }, sub.description),
-            ),
-          ),
-        ),
-    h(
-      "form",
-      { class: "row", onsubmit: (e) => (e.preventDefault(), newSubtask.value.trim() && update({ subtasks: [...keep, { title: newSubtask.value.trim() }] })) },
-      newSubtask,
-      h("button", { type: "submit" }, "Add"),
-    ),
+    task.subtasks.length === 0 ? h("div", { class: "muted" }, "None.") : h("ul", { class: "plain" }, task.subtasks.map(subtaskRow)),
+    h("div", { class: "row" }, adding),
   );
 
   const text = h("textarea", { placeholder: "Markdown" });
