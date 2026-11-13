@@ -115,3 +115,8 @@ li.dep { display: flex; gap: 6px; align-items: baseline; justify-content: space-
 ul.picks li { border: 0; padding: 0; }
 button.pick { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px; padding: 4px 6px; }
 button.pick:hover, button.pick:focus-visible { background: var(--bg); }
+ol.plan, ul.plan { list-style: none; padding: 0; margin: 0 0 6px; display: flex; flex-direction: column; gap: 8px; }
+ol.plan li.plan-step { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+ol.plan li.plan-step .row { margin-top: 0; }
+ol.plan textarea { min-height: 50px; }
+ul.plan li.row { margin-top: 0; border: 0; padding: 0; }

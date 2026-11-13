@@ -309,7 +309,9 @@ async function board(params) {
       ),
     );
   });
-  main.replaceChildren(filters, h("div", { class: `board cols-${columns.length}` }, columns));
+  main.replaceChildren(
+    tasks.length === 0 && !cancelled ? h("div", { class: "panel" }, "No tasks yet: ", h("a", { href: "#/new" }, "New task")) : "",
+    filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
 
 const LIST_ITEM = /^\s*([-*]|\d+\.)\s+/;
@@ -476,13 +478,14 @@ function dependable(tasks, task) {
   return tasks.filter((other) => other.status !== "cancelled" && !waiting.has(other.id));
 }
 
-/** A box that finds one of `candidates` by part of its title or short id; Enter picks the first match. */
+/** A box that finds one of `candidates` (an array, or a function giving one) by part of its title or short id; Enter picks the first match. */
 function taskPicker({ candidates, label: name, onPick }) {
+  const pool = () => (typeof candidates === "function" ? candidates() : candidates);
   const input = h("input", { type: "search", placeholder: "Find a task by title or short id", "aria-label": name, autocomplete: "off" });
   const list = h("ul", { class: "plain picks", role: "listbox", "aria-label": "Matching tasks" });
   const matches = () => {
     const query = input.value.trim().toLowerCase();
-    return query ? candidates.filter((each) => each.shortId.startsWith(query) || each.title.toLowerCase().includes(query)).slice(0, 8) : [];
+    return query ? pool().filter((each) => each.shortId.startsWith(query) || each.title.toLowerCase().includes(query)).slice(0, 8) : [];
   };
   const pick = (each) => {
     input.value = "";
@@ -575,7 +578,7 @@ async function taskPage(ref) {
       CLOSED.includes(task.status)
         ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
         : [h("button", { class: "primary", onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { class: "quiet danger", onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
-      h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
+      h("button", { onclick: () => editForm(task, labelList) }, "Edit"),
       h("button", { class: "danger", onclick: deleteTask }, "Delete"),
     ),
     box,
@@ -910,36 +913,20 @@ async function labelsPage() {
 const many = (name, options, chosen) => h("select", { multiple: true, "aria-label": name, size: Math.min(6, Math.max(2, options.length)) }, options.map(([value, text]) => h("option", { value, selected: chosen.includes(value) }, text)));
 const picked = (select) => [...select.selectedOptions].map((option) => option.value);
 
-function fields(task, tasks, labelList) {
+/** A task's title, description and labels; its criteria, subtasks and dependencies have their own editors. */
+function fields(task, labelList) {
   const title = h("input", { value: task?.title ?? "", style: "width:100%", required: true, "aria-label": "Title" });
-  const description = h("textarea", { style: "min-height:160px", "aria-label": "Description" });
+  const description = h("textarea", { style: "min-height:160px", "aria-label": "Description", placeholder: "Markdown" });
   description.value = task?.description ?? "";
-  // A task's criteria are edited in place on its page; only a new task takes them here.
-  const criteria = !task && h("textarea", { "aria-label": "Acceptance criteria, one a line" });
-  // A task's dependencies are set on its page; only a new task takes them here.
-  const dependsOn = !task && many("Depends on", tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
-  const labels = many("Labels", labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
-  const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
+  const labels = labelList.length ? many("Labels", labelList.map((each) => [each.id, each.name]), task?.labels ?? []) : h("a", { href: "#/labels" }, "No labels yet: make one");
   return {
-    nodes: [
-      h("label", {}, "Title"), title,
-      h("label", {}, "Description"), description,
-      criteria && [h("label", {}, "Acceptance criteria, one a line"), criteria],
-      dependsOn && [h("label", {}, "Depends on"), dependsOn],
-      h("label", {}, "Labels"), labels,
-    ],
-    value: () => ({
-      title: title.value,
-      description: description.value,
-      ...(criteria && { criteria: lines(criteria).map((text) => ({ text })) }),
-      ...(dependsOn && { dependsOn: picked(dependsOn) }),
-      labels: picked(labels),
-    }),
+    nodes: [h("label", {}, "Title"), title, h("label", {}, "Description"), description, h("label", {}, "Labels"), labels],
+    value: () => ({ title: title.value, description: description.value, ...(labelList.length && { labels: picked(labels) }) }),
   };
 }
 
-function editForm(task, tasks, labelList) {
-  const form = fields(task, tasks, labelList);
+function editForm(task, labelList) {
+  const form = fields(task, labelList);
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -967,29 +954,135 @@ function editForm(task, tasks, labelList) {
 
 async function newTask() {
   const [tasks, labelList] = await Promise.all([all("/tasks", "tasks"), all("/labels", "labels")]);
-  const form = fields(null, tasks, labelList);
-  const subtasks = h("textarea", { "aria-label": "Subtasks, one a line" });
+  const form = fields(null, labelList);
   const box = errorBox();
+
+  const criteria = h("ul", { class: "plain plan" });
+  const addCriterion = () => {
+    const input = h("input", { placeholder: "What is true once it is done", "aria-label": "Criterion", style: "flex:1" });
+    const li = h("li", { class: "row" }, input, h("button", { type: "button", class: "quiet", "aria-label": "Remove this criterion", onclick: () => li.remove() }, "Remove"));
+    criteria.append(li);
+    input.focus();
+  };
+
+  // Subtasks get ids s1, s2… in row order, as CreateTask gives them, so a row may come after earlier rows by those ids.
+  const steps = [];
+  const stepList = h("ol", { class: "plain plan" });
+  const drawSteps = () =>
+    fill(
+      stepList,
+      steps.map((step, at) => {
+        const id = `s${at + 1}`;
+        step.names = [];
+        const title = h("input", {
+          value: step.title,
+          placeholder: "Title",
+          "aria-label": `Subtask ${id} title`,
+          style: "flex:1",
+          oninput: (e) => {
+            step.title = e.target.value;
+            for (const name of step.names) name.textContent = `${id} ${step.title}`;
+          },
+        });
+        const description = h("textarea", { placeholder: "Description (optional)", "aria-label": `Subtask ${id} description`, oninput: (e) => (step.description = e.target.value) });
+        description.value = step.description;
+        const earlier = steps.slice(0, at);
+        return h(
+          "li",
+          { class: "plan-step" },
+          h(
+            "div",
+            { class: "row" },
+            h("span", { class: "muted" }, id),
+            title,
+            h(
+              "button",
+              {
+                type: "button",
+                class: "quiet",
+                "aria-label": `Remove subtask ${id}`,
+                onclick: () => {
+                  steps.splice(at, 1);
+                  for (const other of steps) other.after.delete(step);
+                  drawSteps();
+                },
+              },
+              "Remove",
+            ),
+          ),
+          description,
+          earlier.length > 0 &&
+            h(
+              "fieldset",
+              { class: "after" },
+              h("legend", {}, "After"),
+              earlier.map((other, j) => {
+                const name = h("span", {}, `s${j + 1} ${other.title}`);
+                other.names.push(name);
+                return h("label", { class: "check" }, h("input", { type: "checkbox", checked: step.after.has(other), onchange: (e) => (e.target.checked ? step.after.add(other) : step.after.delete(other)) }), name);
+              }),
+            ),
+        );
+      }),
+    );
+  const addStep = () => {
+    steps.push({ title: "", description: "", after: new Set(), names: [] });
+    drawSteps();
+    stepList.lastElementChild.querySelector("input").focus();
+  };
+
+  const chosen = [];
+  const chosenList = h("ul", { class: "plain" });
+  const drawChosen = () =>
+    fill(
+      chosenList,
+      chosen.map((other) =>
+        h(
+          "li",
+          { class: "dep" },
+          h("span", {}, h("span", { class: "muted" }, `${other.shortId} `), other.title),
+          h("button", { type: "button", class: "quiet remove", "aria-label": `Remove dependency on ${other.shortId}`, onclick: () => (chosen.splice(chosen.indexOf(other), 1), drawChosen()) }, "×"),
+        ),
+      ),
+    );
+  const picker = taskPicker({ candidates: () => dependable(tasks, null).filter((other) => !chosen.includes(other)), label: "Add a dependency", onPick: (other) => (chosen.push(other), drawChosen()) });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const untitled = steps.findIndex((step) => !step.title.trim());
+    if (untitled !== -1) return show(box, { message: `Subtask s${untitled + 1} needs a title, or remove it.` });
+    try {
+      const { task } = await api("POST", "/tasks", {
+        ...form.value(),
+        criteria: [...criteria.querySelectorAll("input")].map((input) => input.value.trim()).filter(Boolean).map((text) => ({ text })),
+        subtasks: steps.map((step) => ({ title: step.title.trim(), description: step.description.trim(), dependsOn: steps.filter((other) => step.after.has(other)).map((other) => `s${steps.indexOf(other) + 1}`) })),
+        dependsOn: chosen.map((other) => other.id),
+      });
+      location.hash = `#/task/${task.shortId}`;
+    } catch (err) {
+      show(box, err);
+    }
+  };
   main.replaceChildren(
     h(
       "form",
       {
-        class: "panel",
-        onsubmit: async (e) => {
-          e.preventDefault();
-          try {
-            const steps = subtasks.value.split("\n").map((line) => line.trim()).filter(Boolean).map((title) => ({ title }));
-            const { task } = await api("POST", "/tasks", { ...form.value(), subtasks: steps });
-            location.hash = `#/task/${task.shortId}`;
-          } catch (err) {
-            show(box, err);
-          }
-        },
+        class: "panel new-task",
+        onsubmit: submit,
+        // Enter in a field goes no further than that field: only Create creates.
+        onkeydown: (e) => e.key === "Enter" && e.target.tagName === "INPUT" && e.preventDefault(),
       },
       h("h1", {}, "New task"),
       form.nodes,
-      h("label", {}, "Subtasks, one a line"),
-      subtasks,
+      h("label", {}, "Acceptance criteria"),
+      criteria,
+      h("button", { type: "button", onclick: addCriterion }, "Add criterion"),
+      h("label", {}, "Subtasks"),
+      stepList,
+      h("button", { type: "button", onclick: addStep }, "Add subtask"),
+      h("label", {}, "Depends on"),
+      chosenList,
+      picker,
       box,
       h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Create"), h("a", { href: lastBoard() }, "Cancel")),
     ),
