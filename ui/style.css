@@ -34,7 +34,14 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px
 .meta { color: var(--muted); font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 11px; border: 1px solid var(--line); color: var(--muted); }
 .badge.blocked { border-color: var(--bad); color: var(--bad); } .badge.ready { border-color: var(--ok); color: var(--ok); } .badge.closed { border-color: var(--ok); color: var(--ok); }
-.tag { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 11px; color: #fff; }
+.tag { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 11px; color: #fff; cursor: pointer; }
+a.tag:hover { text-decoration: none; filter: brightness(1.1); }
+.chip { display: inline-flex; align-items: center; }
+.chip .remove { padding: 0 4px; color: var(--muted); }
+li.label-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+li.label-row .error { flex-basis: 100%; }
+li.label-row .actions { display: flex; gap: 2px; }
+.grow { flex: 1; min-width: 0; }
 .item { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
 .panel h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
