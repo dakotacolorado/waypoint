@@ -241,6 +241,115 @@ async function board(params) {
   main.replaceChildren(landing(true), filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
 
+const LIST_ITEM = /^\s*([-*]|\d+\.)\s+/;
+const BLOCK_START = /^```|^\s*([-*]|\d+\.)\s+|^#{1,6}\s/;
+
+/**
+ * `text` as the part of Markdown people write in a comment: paragraphs, lists, headings, code,
+ * bold, italic and links. Built with `h`, so nothing in it is ever HTML. `find` turns a word
+ * that may be a task's short id into that task, so it links.
+ */
+function markdown(text, find) {
+  const out = h("div", { class: "md" });
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      const code = [];
+      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) code.push(lines[i]);
+      i++;
+      out.append(h("pre", {}, h("code", {}, code.join("\n"))));
+    } else if (LIST_ITEM.test(line)) {
+      const list = h(/^\s*\d/.test(line) ? "ol" : "ul", {});
+      for (; i < lines.length && LIST_ITEM.test(lines[i]); i++) list.append(h("li", {}, inline(lines[i].replace(LIST_ITEM, ""), find)));
+      out.append(list);
+    } else if (/^#{1,6}\s/.test(line)) {
+      out.append(h("p", {}, h("strong", {}, inline(line.replace(/^#+\s*/, ""), find))));
+      i++;
+    } else if (!line.trim()) i++;
+    else {
+      const paragraph = [];
+      for (; i < lines.length && lines[i].trim() && (paragraph.length === 0 || !BLOCK_START.test(lines[i])); i++) paragraph.push(lines[i]);
+      out.append(h("p", {}, paragraph.map((each, at) => [at > 0 && h("br"), inline(each, find)])));
+    }
+  }
+  return out;
+}
+
+const INLINE =
+  /`(?<code>[^`]+)`|\*\*(?<bold>.+?)\*\*|(?<![\w*])(?<mark>[*_])(?<italic>[^\s*_](?:.*?[^\s*_])?)\k<mark>(?![\w*])|\[(?<text>[^\]]+)\]\((?<href>https?:\/\/[^)\s]+)\)|(?<url>https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"])|\b(?<ref>[0-9a-f]{8,})\b/g;
+
+/** One line's inline Markdown, as nodes; a link is only ever http or https. */
+function inline(text, find) {
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(INLINE)) {
+    const { code, bold, italic, text: words, href, url, ref } = match.groups;
+    parts.push(text.slice(last, match.index));
+    last = match.index + match[0].length;
+    if (code !== undefined) parts.push(h("code", {}, code));
+    else if (bold !== undefined) parts.push(h("strong", {}, inline(bold, find)));
+    else if (italic !== undefined) parts.push(h("em", {}, inline(italic, find)));
+    else if (href !== undefined) parts.push(h("a", { href, target: "_blank", rel: "noopener" }, words));
+    else if (url !== undefined) parts.push(h("a", { href: url, target: "_blank", rel: "noopener" }, url));
+    else {
+      const task = find(ref);
+      parts.push(task ? h("a", { href: `#/task/${task.shortId}`, title: task.title }, ref) : ref);
+    }
+  }
+  parts.push(text.slice(last));
+  return parts;
+}
+
+/** `value` as text no longer than `n`. */
+const short = (value, n = 60) => {
+  const text = String(value ?? "").replace(/\s+/g, " ");
+  return text.length > n ? `${text.slice(0, n - 1)}…` : text;
+};
+const quoted = (value) => (value === null || value === undefined || value === "" ? "nothing" : `"${short(value)}"`);
+const without = (a, b) => a.filter((each) => !b.includes(each));
+
+/** What changed in a list of subtasks or criteria, entry by entry. */
+function entryChanges(from, to) {
+  const was = new Map(from.map((each) => [each.id, each]));
+  const out = [];
+  for (const entry of to) {
+    const before = was.get(entry.id);
+    if (!before) {
+      out.push(`+ ${entry.id} ${short(entry.title ?? entry.text, 40)}`);
+      continue;
+    }
+    for (const key of ["title", "text", "description", "status", "met", "dependsOn"]) {
+      if (!(key in entry) || JSON.stringify(before[key]) === JSON.stringify(entry[key])) continue;
+      if (key === "status") out.push(`${entry.id} status ${label(before.status)} → ${label(entry.status)}`);
+      else if (key === "met") out.push(`${entry.id} ${entry.met ? "met" : "unmet"}`);
+      else if (key === "dependsOn") out.push(`${entry.id} after ${before.dependsOn.join(", ") || "nothing"} → ${entry.dependsOn.join(", ") || "nothing"}`);
+      else out.push(`${entry.id} ${key} ${quoted(before[key])} → ${quoted(entry[key])}`);
+    }
+  }
+  for (const entry of from) if (!to.some((each) => each.id === entry.id)) out.push(`− ${entry.id} ${short(entry.title ?? entry.text, 40)}`);
+  return out;
+}
+
+/** One history change as what it was and what it became, or null for one that says nothing (an empty list created empty); `name` names a task or label id. */
+function describe({ field, from, to }, name) {
+  const each = (parts) => (parts.length ? `${field}: ${parts.join(field === "subtasks" || field === "criteria" ? "; " : ", ")}` : null);
+  switch (field) {
+    case "status":
+      return `status: ${from ? label(from) : "nothing"} → ${to ? label(to) : "nothing"}`;
+    case "dependsOn":
+    case "labels": {
+      const nameOf = name[field];
+      return each([...without(to ?? [], from ?? []).map((id) => `+ ${nameOf(id)}`), ...without(from ?? [], to ?? []).map((id) => `− ${nameOf(id)}`)]);
+    }
+    case "subtasks":
+    case "criteria":
+      return each(entryChanges(from ?? [], to ?? []));
+    default:
+      return quoted(from) === quoted(to) ? null : `${field}: ${quoted(from)} → ${quoted(to)}`;
+  }
+}
+
 /** Those of `value`'s fields that differ from `sub`'s, so a save sends only what was changed. */
 const changed = (sub, value) => Object.fromEntries(Object.entries(value).filter(([key, each]) => JSON.stringify(each) !== JSON.stringify(sub[key])));
 
@@ -284,6 +393,7 @@ async function taskPage(ref) {
   ]);
   const byId = new Map(tasks.map((each) => [each.id, each]));
   const labels = new Map(labelList.map((each) => [each.id, each]));
+  const find = (ref) => tasks.find((each) => each.shortId === ref || each.id.startsWith(ref));
   const link = (id) => {
     const other = byId.get(id);
     return other ? h("a", { href: `#/task/${other.shortId}` }, `${other.shortId} ${other.title}`, h("span", { class: "muted" }, ` · ${label(other.status)}`)) : h("span", { class: "muted" }, id.slice(0, 8));
@@ -335,37 +445,68 @@ async function taskPage(ref) {
     ),
   );
 
-  const description = h("div", { class: "panel" }, h("h2", {}, "Description"), task.description ? h("div", { class: "body" }, task.description) : h("div", { class: "muted" }, "Nothing written."));
+  const description = h("div", { class: "panel" }, h("h2", {}, "Description"), task.description.trim() ? markdown(task.description, find) : h("div", { class: "muted" }, "Nothing written."));
 
   const met = task.criteria.filter((criterion) => criterion.met).length;
+  // Every other entry gives only its id, so a tick or edit another caller makes meanwhile stands.
+  const criteriaWith = (criterion, entry) => task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, ...entry } : { id: each.id }));
+  const criterionRow = (criterion) => {
+    const li = h("li", { class: "criterion" });
+    const rowBox = errorBox();
+    const send = (list, undo) => update({ criteria: list }, undo, rowBox);
+    const view = () =>
+      fill(
+        li,
+        h(
+          "label",
+          { class: "check" },
+          h("input", { type: "checkbox", checked: criterion.met, onchange: (e) => send(criteriaWith(criterion, { met: e.target.checked }), () => (e.target.checked = criterion.met)) }),
+          h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${who(criterion.metBy)}, ${when(criterion.metAt)}`)),
+        ),
+        h(
+          "span",
+          { class: "actions" },
+          h("button", { type: "button", class: "quiet", onclick: edit, "aria-label": `Edit criterion ${criterion.id}` }, "Edit"),
+          h("button", { type: "button", class: "quiet", onclick: remove, "aria-label": `Remove criterion ${criterion.id}` }, "Remove"),
+        ),
+        rowBox,
+      );
+    const edit = () => {
+      const input = h("input", { value: criterion.text, "aria-label": `Criterion ${criterion.id} text`, style: "flex:1" });
+      const save = () => (input.value.trim() && input.value.trim() !== criterion.text ? send(criteriaWith(criterion, { text: input.value.trim() })) : view());
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") e.preventDefault(), save();
+        if (e.key === "Escape") e.preventDefault(), view();
+      });
+      fill(li, input, h("button", { type: "button", class: "primary", onclick: save }, "Save"), h("button", { type: "button", onclick: view }, "Cancel"), rowBox);
+      input.focus();
+    };
+    const remove = () => {
+      if (confirm(`Remove criterion ${criterion.id} "${criterion.text}"?`)) send(task.criteria.filter((each) => each.id !== criterion.id).map((each) => ({ id: each.id })));
+    };
+    view();
+    return li;
+  };
+  const newCriterion = h("input", { placeholder: "New criterion", "aria-label": "New criterion", style: "flex:1" });
+  const criterionBox = errorBox();
   const criteria = h(
     "div",
     { class: "panel" },
     h("h2", {}, `Acceptance criteria (${met}/${task.criteria.length})`),
-    task.criteria.length === 0
-      ? h("div", { class: "muted" }, "None.")
-      : h(
-          "ul",
-          { class: "plain" },
-          task.criteria.map((criterion) =>
-            h(
-              "li",
-              {},
-              h(
-                "label",
-                { class: "check" },
-                h("input", {
-                  type: "checkbox",
-                  checked: criterion.met,
-                  // Only this entry says `met`, so a tick another caller makes meanwhile stands.
-                  onchange: (e) =>
-                    update({ criteria: task.criteria.map((each) => (each.id === criterion.id ? { id: each.id, met: e.target.checked } : { id: each.id })) }, () => (e.target.checked = criterion.met)),
-                }),
-                h("span", {}, criterion.text, criterion.met && h("span", { class: "muted" }, ` · ${who(criterion.metBy)}, ${when(criterion.metAt)}`)),
-              ),
-            ),
-          ),
-        ),
+    task.criteria.length === 0 ? h("div", { class: "muted" }, "None.") : h("ul", { class: "plain" }, task.criteria.map(criterionRow)),
+    h(
+      "form",
+      {
+        class: "row",
+        onsubmit: (e) => {
+          e.preventDefault();
+          if (newCriterion.value.trim()) update({ criteria: [...task.criteria.map((each) => ({ id: each.id })), { text: newCriterion.value.trim() }] }, undefined, criterionBox);
+        },
+      },
+      newCriterion,
+      h("button", { type: "submit" }, "Add"),
+    ),
+    criterionBox,
   );
 
   const keep = task.subtasks.map((sub) => ({ id: sub.id }));
@@ -435,20 +576,27 @@ async function taskPage(ref) {
     h("div", { class: "row" }, adding),
   );
 
-  const text = h("textarea", { placeholder: "Markdown" });
+  const comment = h("button", { type: "submit", disabled: true }, "Comment");
+  const text = h("textarea", { placeholder: "Markdown: **bold**, *italic*, `code`, [a link](https://…), a task's short id", "aria-label": "Comment", oninput: () => (comment.disabled = !text.value.trim()) });
+  const commentBox = errorBox();
   const talk = h(
     "div",
     { class: "panel" },
     h("h2", {}, "Comments"),
-    comments.map((comment) => h("div", { class: "note" }, h("div", { class: "who" }, `${who(comment.author)} · ${when(comment.createdAt)}`), h("div", { class: "body" }, comment.body))),
+    comments.map((each) => h("div", { class: "note" }, h("div", { class: "who" }, `${who(each.author)} · ${when(each.createdAt)}`), markdown(each.body, find))),
     h(
       "form",
-      { onsubmit: (e) => (e.preventDefault(), act(box, () => api("POST", `/tasks/${task.id}/comments`, { body: text.value }))) },
+      { onsubmit: (e) => (e.preventDefault(), text.value.trim() && act(commentBox, () => api("POST", `/tasks/${task.id}/comments`, { body: text.value }))) },
       text,
-      h("div", { class: "row" }, h("button", { type: "submit" }, "Comment")),
+      commentBox,
+      h("div", { class: "row" }, comment),
     ),
   );
 
+  const names = {
+    dependsOn: (id) => (byId.has(id) ? `${byId.get(id).shortId} ${short(byId.get(id).title, 40)}` : id.slice(0, 8)),
+    labels: (id) => labels.get(id)?.name ?? "a deleted label",
+  };
   const side = h(
     "div",
     {},
@@ -466,7 +614,7 @@ async function taskPage(ref) {
       "div",
       { class: "panel" },
       h("details", {}, h("summary", {}, `History (${history.length})`), h("ul", { class: "plain" }, history.slice().reverse().map((entry) =>
-        h("li", {}, h("div", { class: "who muted" }, `${entry.action} · ${who(entry.actor)} · ${when(entry.at)}`), h("div", {}, entry.changes.map((change) => change.field).join(", "))),
+        h("li", {}, h("div", { class: "who muted" }, `${entry.action} · ${who(entry.actor)} · ${when(entry.at)}`), entry.changes.map((change) => describe(change, names)).filter(Boolean).map((text) => h("div", { class: "change" }, text))),
       ))),
     ),
   );
@@ -481,8 +629,8 @@ function fields(task, tasks, labelList) {
   const title = h("input", { value: task?.title ?? "", style: "width:100%", required: true });
   const description = h("textarea", { style: "min-height:160px" });
   description.value = task?.description ?? "";
-  const criteria = h("textarea", {});
-  criteria.value = (task?.criteria ?? []).map((criterion) => criterion.text).join("\n");
+  // A task's criteria are edited in place on its page; only a new task takes them here.
+  const criteria = !task && h("textarea", {});
   const dependsOn = many(tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
   const labels = many(labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
   const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -490,19 +638,17 @@ function fields(task, tasks, labelList) {
     nodes: [
       h("label", {}, "Title"), title,
       h("label", {}, "Description"), description,
-      h("label", {}, "Acceptance criteria, one a line"), criteria,
+      criteria && [h("label", {}, "Acceptance criteria, one a line"), criteria],
       h("label", {}, "Depends on"), dependsOn,
       h("label", {}, "Labels"), labels,
     ],
-    value: () => {
-      // A line left as it was keeps its criterion, and whether it is met.
-      const current = [...(task?.criteria ?? [])];
-      const list = lines(criteria).map((text) => {
-        const at = current.findIndex((criterion) => criterion.text === text);
-        return at === -1 ? { text } : { id: current.splice(at, 1)[0].id };
-      });
-      return { title: title.value, description: description.value, criteria: list, dependsOn: picked(dependsOn), labels: picked(labels) };
-    },
+    value: () => ({
+      title: title.value,
+      description: description.value,
+      ...(criteria && { criteria: lines(criteria).map((text) => ({ text })) }),
+      dependsOn: picked(dependsOn),
+      labels: picked(labels),
+    }),
   };
 }
 
