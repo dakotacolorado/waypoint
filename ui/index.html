@@ -11,13 +11,14 @@
   else {
     const style = Object.assign(document.createElement("link"), { rel: "stylesheet", href: "./ui/style.css" });
     const app = Object.assign(document.createElement("script"), { type: "module", src: "./ui/app.js" });
-    document.head.append(style, app);
+    const icon = Object.assign(document.createElement("link"), { rel: "icon", type: "image/svg+xml", href: "./ui/mark.svg" });
+    document.head.append(style, icon, app);
   }
 </script>
 </head>
 <body>
 <header>
-  <a class="brand" href="#/">📍 waypoint</a>
+  <a class="brand" href="#/">waypoint</a>
   <nav>
     <a href="#/">Board</a>
     <a href="#/new">New task</a>

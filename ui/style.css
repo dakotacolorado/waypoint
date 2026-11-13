@@ -11,7 +11,8 @@ body { margin: 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; }
-.brand { font-weight: 700; font-size: 16px; color: var(--ink); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--ink); }
+.brand svg { height: 16px; width: auto; color: var(--mark); }
 nav { display: flex; gap: 16px; align-items: center; flex: 1; }
 nav #signout { margin-left: auto; }
 main { padding: 20px; max-width: 1400px; margin: 0 auto; }

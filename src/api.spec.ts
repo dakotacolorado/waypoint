@@ -246,7 +246,8 @@ describe("pages", () => {
   it.each([
     ["/", "text/html", "<title>waypoint</title>"],
     ["/ui/app.js", "text/javascript", "function board"],
-    ["/ui/banner.js", "text/javascript", "export const PIN_SVG"],
+    ["/ui/banner.js", "text/javascript", "export const MARK_SVG"],
+    ["/ui/mark.svg", "image/svg+xml", "<svg"],
     ["/docs/api", "text/html", "CreateTask"],
     ["/docs/mcp", "text/html", "create_task"],
     ["/openapi.json", "application/json", "ListTasks"],

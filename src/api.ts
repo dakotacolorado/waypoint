@@ -4,7 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Auth, Caller } from "./auth.ts";
-import { EMOJI, LETTERS_ONLY, PIN_SVG, SUMMARY, TAGLINE } from "./banner.ts";
+import { LETTERS_ONLY, MARK_ICON, MARK_PIXEL_SVG, MARK_SVG, SUMMARY, TAGLINE } from "./banner.ts";
 import { contract } from "./contract.ts";
 import { ConflictError, NotFoundError, ValidationError, type Status } from "./domain.ts";
 import { mcpServer, type Call } from "./mcp.ts";
@@ -207,10 +207,11 @@ export class WaypointApi {
     this.hono.get("/", serve(file("ui/index.html"), "text/html"));
     this.hono.get("/ui/app.js", serve(file("ui/app.js"), "text/javascript"));
     this.hono.get("/ui/style.css", serve(file("ui/style.css"), "text/css"));
-    const mark = Object.entries({ LETTERS: LETTERS_ONLY, PIN_SVG, EMOJI, TAGLINE, SUMMARY, STATUSES: routes.Status.options as readonly Status[] })
+    const mark = Object.entries({ LETTERS: LETTERS_ONLY, MARK_PIXEL_SVG, MARK_SVG, TAGLINE, SUMMARY, STATUSES: routes.Status.options as readonly Status[] })
       .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};\n`)
       .join("");
     this.hono.get("/ui/banner.js", serve(mark, "text/javascript"));
+    this.hono.get("/ui/mark.svg", serve(MARK_ICON, "image/svg+xml"));
     this.hono.get("/docs/api", serve(file("docs/index.html"), "text/html"));
     // The docs' example address is a local one; served, they give this deployment's own.
     const local = "http://127.0.0.1:4400";
