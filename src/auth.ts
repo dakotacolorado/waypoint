@@ -1,9 +1,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-/** Who a bearer token belongs to. A write naming no `x-actor` is recorded under its name, or null for an admin. */
+/** Who a bearer token belongs to. A write naming no `x-actor` is recorded under its name. */
 export interface Caller {
-  name: string;
+  /** Null for the environment's admin token, which has none. */
+  name: string | null;
   admin: boolean;
 }
 
@@ -31,7 +32,7 @@ const same = (a: string, b: string) => {
 };
 
 /** One token for one caller: the tests', or a deployment's admin token from its environment. */
-export const singleToken = (token: string, caller: Caller = { name: "admin", admin: true }): Auth => ({
+export const singleToken = (token: string, caller: Caller = { name: null, admin: true }): Auth => ({
   caller: (given) => (same(given, token) ? caller : null),
 });
 
@@ -48,7 +49,7 @@ export class Tokens implements Auth {
   }
 
   caller(token: string): Caller | null {
-    if (this.envAdmin !== undefined && same(token, this.envAdmin)) return { name: "admin", admin: true };
+    if (this.envAdmin !== undefined && same(token, this.envAdmin)) return { name: null, admin: true };
     const row = this.db.prepare("SELECT name, admin FROM tokens WHERE hash = ?").get(hash(token)) as { name: string; admin: number } | undefined;
     return row ? { name: row.name, admin: row.admin === 1 } : null;
   }

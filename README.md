@@ -55,6 +55,7 @@ The page shows the board by status, which tasks are ready and which are blocked,
 - A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.
 - A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
+- `ListTasks` leaves cancelled tasks out unless `includeCancelled` is `true` (or `status` is `cancelled`); the page's **Show cancelled** does the same.
 - **Labels** group tasks. **Comments** sit beside a task without changing it, and its **history** records every write.
 
 ## The API
@@ -69,7 +70,7 @@ Fourteen operations, named as AWS names theirs:
 | `ListLabels`, `CreateLabel`, `GetLabel`, `UpdateLabel`, `DeleteLabel` | `/labels`, `/labels/{labelId}` |
 | `GetHealth` | `/health` |
 
-The reference is [`docs/API.md`](./docs/API.md), served at `/docs/api`; the contract is [`openapi.json`](./openapi.json).
+The reference is [`docs/API.md`](./docs/API.md), served at `/docs/api`; the contract is [`openapi.json`](./openapi.json). The API's version (`info.version` in `openapi.json`) is a date, changed only when the contract is, as AWS dates theirs; it is apart from the package's version, which `GetHealth` gives.
 
 ```sh
 curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' http://127.0.0.1:4400/tasks -d '{
@@ -98,7 +99,7 @@ The tools are listed in [`docs/MCP.md`](./docs/MCP.md), served at `/docs/mcp`.
 
 ## Tokens
 
-Every request but `GetHealth` takes a bearer token. Tokens are kept as hashes, so each is shown only when made:
+Every request takes `Authorization: Bearer <token>` but these, which hold no data: `GetHealth` (`/health`), the contracts (`/openapi.json`, `/mcp.json`), the docs (`/docs/api`, `/docs/mcp`) and the page (`/`, `/ui/…`). Tokens are kept as hashes, so each is shown only when made:
 
 ```sh
 waypoint token create alice --admin
@@ -107,7 +108,7 @@ waypoint token list
 waypoint token revoke builds
 ```
 
-A write is recorded as its `x-actor` header, else its token's name. `WAYPOINT_ADMIN_TOKEN`, if set, is an admin token too, never stored. With no admin token at all, `waypoint` makes one and prints it.
+A write is recorded as its `x-actor` header, else its token's name. `WAYPOINT_ADMIN_TOKEN`, if set, is an admin token too, never stored and with no name: a write by it naming no `x-actor` is recorded with a null actor, which the page shows as "env admin token". With no admin token at all, `waypoint` makes one, named `admin`, and prints it.
 
 ## Options
 

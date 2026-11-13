@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { WaypointApi } from "./api.ts";
 import { Tokens } from "./auth.ts";
+import { OPEN_PATHS, OPEN_WORDS, OVERVIEW } from "./contract.ts";
 import type { HistoryEntry, TaskView } from "./domain.ts";
 import { FakeStore } from "./fake-store.ts";
 import type { Label } from "./labels.ts";
 import type { Comment } from "./store.ts";
+import { readFileSync } from "node:fs";
 
 let store: FakeStore;
 let api: WaypointApi;
@@ -13,7 +15,7 @@ let worker: string;
 
 beforeEach(() => {
   store = new FakeStore();
-  const tokens = new Tokens(store.db);
+  const tokens = new Tokens(store.db, "from-env");
   admin = tokens.create("person", true);
   worker = tokens.create("fleet", false);
   api = new WaypointApi(store, tokens, { about: { version: "1.2.3", commit: "c".repeat(40) } });
@@ -40,19 +42,27 @@ const update = (id: string, input: object, options?: { token?: string; actor?: s
 const get = async (id: string) => (await call("GET", `/tasks/${id}`)).body!.task as TaskView;
 
 describe("auth", () => {
-  it("answers GetHealth without a token, and nothing else", async () => {
+  it("answers the paths the docs name as open without a token, and nothing else", async () => {
     const health = await api.fetch(new Request("http://local/health"));
     expect(await health.json()).toEqual({ ok: true, version: "1.2.3", commit: "c".repeat(40) });
-    const refused = await call("GET", "/tasks", undefined, { token: "wp_nobody" });
-    expect(refused).toEqual({ status: 401, body: { code: "UnauthorizedException", message: expect.any(String) } });
+    for (const path of OPEN_PATHS) {
+      expect((await api.fetch(new Request(`http://local${path === "/ui/" ? "/ui/app.js" : path}`))).status, path).toBe(200);
+    }
+    for (const [method, path] of [["GET", "/tasks"], ["GET", "/tasks/12345678"], ["GET", "/labels"], ["GET", "/labels/x"], ["POST", "/mcp"]] as const) {
+      expect(await call(method, path, undefined, { token: "wp_nobody" }), path).toEqual({ status: 401, body: { code: "UnauthorizedException", message: expect.any(String) } });
+    }
+    for (const path of OPEN_PATHS) expect(OPEN_WORDS).toContain(path === "/ui/" ? "`/ui/…`" : `\`${path}\``);
+    expect(OVERVIEW).toContain(OPEN_WORDS);
+    expect(readFileSync(new URL("../README.md", import.meta.url), "utf8")).toContain(OPEN_WORDS);
   });
 
-  it("records a write as its x-actor, else its token's name, and an admin's that names no one as null", async () => {
-    const a = await create({ title: "by admin" });
+  it("records a write as its x-actor, else its token's name, and the environment's admin token's that names no one as null", async () => {
+    const env = await create({ title: "by the environment's admin token" }, { token: "from-env" });
+    const a = await create({ title: "by person" });
     const b = await create({ title: "by fleet" }, { token: worker });
     const c = await create({ title: "by agent-3" }, { token: worker, actor: "agent-3" });
-    const actors = await Promise.all([a, b, c].map(async (task) => ((await call("GET", `/tasks/${task.id}/history`)).body!.entries as HistoryEntry[])[0]!.actor));
-    expect(actors).toEqual([null, "fleet", "agent-3"]);
+    const actors = await Promise.all([env, a, b, c].map(async (task) => ((await call("GET", `/tasks/${task.id}/history`)).body!.entries as HistoryEntry[])[0]!.actor));
+    expect(actors).toEqual([null, "person", "fleet", "agent-3"]);
   });
 });
 

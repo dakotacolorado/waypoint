@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderApiReference, type Document } from "./api-doc.ts";
+import { apiTitle, renderApiReference, type Document } from "./api-doc.ts";
 import { SPEC_PATH, WaypointApi } from "./api.ts";
 import { singleToken } from "./auth.ts";
 import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
@@ -27,7 +29,12 @@ if (import.meta.main) {
   const doc = await openApiDocument();
   writeFileSync(SPEC_FILE, `${JSON.stringify(doc, null, 2)}\n`);
   writeFileSync(API_DOC, renderApiReference(doc));
-  execFileSync("npx", ["redocly", "build-docs", SPEC_FILE, "-o", API_PAGE], { stdio: "ignore" });
+  // Redoc titles the page "title (version)"; given no version, it shows the title alone, which names it.
+  const dir = mkdtempSync(join(tmpdir(), "waypoint-spec-"));
+  const titled = join(dir, "openapi.json");
+  writeFileSync(titled, JSON.stringify({ ...doc, info: { ...doc.info, title: apiTitle(doc.info), version: "" } }));
+  execFileSync("npx", ["redocly", "build-docs", titled, "-o", API_PAGE, "--lint-config", "off"], { stdio: "ignore" });
+  rmSync(dir, { recursive: true });
   const mcp = await mcpDocument();
   writeFileSync(MCP_FILE, `${JSON.stringify(mcp, null, 2)}\n`);
   writeFileSync(MCP_DOC, renderMcp(mcp));
