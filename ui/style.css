@@ -13,14 +13,14 @@ a:hover { text-decoration: underline; }
 header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--ink); }
 .brand svg { height: 16px; width: auto; color: var(--mark); }
-nav { display: flex; gap: 16px; align-items: center; flex: 1; }
-nav #signout { margin-left: auto; }
-nav a, nav button { white-space: nowrap; }
+header nav { display: flex; gap: 16px; align-items: center; flex: 1; }
+header nav #signout { margin-left: auto; }
+header nav a, header nav button { white-space: nowrap; }
 @media (max-width: 520px) {
   header { gap: 8px; padding: 8px; }
-  nav { gap: 8px; }
+  header nav { gap: 8px; }
   .brand span { display: none; }
-  nav #signout { padding: 3px 6px; }
+  header nav #signout { padding: 3px 6px; }
 }
 main { padding: 20px; max-width: 1400px; margin: 0 auto; }
 button, select, input, textarea { font: inherit; color: inherit; }
@@ -106,3 +106,12 @@ ul.card-subtasks .badge { flex: none; }
 .md pre code { border: 0; padding: 0; }
 .change { overflow-wrap: anywhere; font-size: 13px; }
 .saved { color: var(--ok); font-size: 12px; }
+fieldset.after { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 4px; }
+fieldset.after legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.after-list { font-size: 12px; }
+li.dep { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; }
+.picker { margin-top: 8px; }
+.picker input { width: 100%; }
+ul.picks li { border: 0; padding: 0; }
+button.pick { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px; padding: 4px 6px; }
+button.pick:hover, button.pick:focus-visible { background: var(--bg); }

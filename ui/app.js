@@ -428,13 +428,15 @@ const changed = (sub, value) => Object.fromEntries(Object.entries(value).filter(
  * A subtask's title and description, being written. Not a form, so it can sit inside one:
  * Enter in the title saves and Escape cancels.
  */
-function subtaskEditor(sub, { onSave, onCancel, saveText = "Save" }) {
+function subtaskEditor(sub, { siblings = [], onSave, onCancel, saveText = "Save" }) {
   const title = h("input", { value: sub?.title ?? "", placeholder: "Title", "aria-label": "Subtask title" });
   const description = h("textarea", { placeholder: "Description (optional)", "aria-label": "Subtask description" });
   description.value = sub?.description ?? "";
+  const after = siblings.map((each) => h("input", { type: "checkbox", value: each.id, checked: (sub?.dependsOn ?? []).includes(each.id) }));
   const save = () => {
     if (!title.value.trim()) return title.focus();
-    onSave({ title: title.value.trim(), description: description.value.trim() });
+    const dependsOn = after.filter((box) => box.checked).map((box) => box.value);
+    onSave({ title: title.value.trim(), description: description.value.trim(), ...(siblings.length && { dependsOn }) });
   };
   title.addEventListener("keydown", (e) => {
     if (e.key === "Enter") e.preventDefault(), save();
@@ -449,9 +451,61 @@ function subtaskEditor(sub, { onSave, onCancel, saveText = "Save" }) {
     },
     title,
     description,
+    siblings.length > 0 &&
+      h(
+        "fieldset",
+        { class: "after" },
+        h("legend", {}, "After"),
+        siblings.map((each, at) => h("label", { class: "check" }, after[at], `${each.id} ${each.title}`)),
+      ),
     h("div", { class: "row" }, h("button", { type: "button", class: "primary", onclick: save }, saveText), h("button", { type: "button", onclick: onCancel }, "Cancel")),
   );
   return { el, focus: () => title.focus() };
+}
+
+/**
+ * The tasks `task` may depend on: open ones, not itself, and none that already waits on it,
+ * directly or through others, since that would make a cycle. `task` is null for a new one.
+ */
+function dependable(tasks, task) {
+  const waiting = new Set(task ? [task.id] : []);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const other of tasks) if (!waiting.has(other.id) && other.dependsOn.some((id) => waiting.has(id))) waiting.add(other.id), (grew = true);
+  }
+  return tasks.filter((other) => other.status !== "cancelled" && !waiting.has(other.id));
+}
+
+/** A box that finds one of `candidates` by part of its title or short id; Enter picks the first match. */
+function taskPicker({ candidates, label: name, onPick }) {
+  const input = h("input", { type: "search", placeholder: "Find a task by title or short id", "aria-label": name, autocomplete: "off" });
+  const list = h("ul", { class: "plain picks", role: "listbox", "aria-label": "Matching tasks" });
+  const matches = () => {
+    const query = input.value.trim().toLowerCase();
+    return query ? candidates.filter((each) => each.shortId.startsWith(query) || each.title.toLowerCase().includes(query)).slice(0, 8) : [];
+  };
+  const pick = (each) => {
+    input.value = "";
+    draw();
+    onPick(each);
+  };
+  const draw = () => {
+    const found = matches();
+    fill(
+      list,
+      found.map((each) => h("li", { role: "option" }, h("button", { type: "button", class: "pick", onclick: () => pick(each) }, h("span", { class: "muted" }, `${each.shortId} `), each.title, h("span", { class: "muted" }, ` · ${label(each.status)}`)))),
+      input.value.trim() && found.length === 0 && h("li", { class: "muted" }, "No open task matches."),
+    );
+  };
+  input.addEventListener("input", draw);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const [first] = matches();
+      if (first) pick(first);
+    }
+  });
+  return h("div", { class: "picker" }, input, list);
 }
 
 /** The field a write from the task page just saved, said once on the redraw that follows it. */
@@ -487,6 +541,7 @@ async function taskPage(ref) {
   };
   const box = errorBox();
   const labelBox = errorBox();
+  const depBox = errorBox();
   const deleteTask = async () => {
     if (!confirm(`Delete task ${task.shortId} "${task.title}"? Its subtasks, criteria, comments and history go with it.`)) return;
     try {
@@ -652,7 +707,16 @@ async function taskPage(ref) {
           STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
         ),
         h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
-        sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `depends on ${sub.dependsOn.join(", ")}`),
+        sub.dependsOn.length > 0 &&
+          h(
+            "span",
+            { class: "after-list" },
+            "after ",
+            sub.dependsOn.map((id, at) => [
+              at > 0 && ", ",
+              h("span", sub.blockedBy.includes(id) ? { class: "badge blocked", title: `${id} is still open: it blocks ${sub.id}` } : { class: "muted" }, `${id} ${subtask(id)?.title ?? ""}`),
+            ]),
+          ),
         h(
           "span",
           { class: "actions" },
@@ -663,7 +727,8 @@ async function taskPage(ref) {
         rowBox,
       );
     const edit = () => {
-      const editor = subtaskEditor(sub, { onSave: (value) => send(subtasksWith(sub, changed(sub, value))), onCancel: view });
+      const siblings = task.subtasks.filter((each) => each.id !== sub.id);
+      const editor = subtaskEditor(sub, { siblings, onSave: (value) => send(subtasksWith(sub, changed(sub, value))), onCancel: view });
       li.replaceChildren(h("span", { class: "muted" }, sub.id), editor.el, rowBox);
       editor.focus();
     };
@@ -683,6 +748,7 @@ async function taskPage(ref) {
           type: "button",
           onclick: () => {
             const editor = subtaskEditor(null, {
+              siblings: task.subtasks,
               saveText: "Add",
               onSave: (value) => update({ subtasks: [...keep, value] }, undefined, addBox),
               onCancel: addButton,
@@ -731,7 +797,26 @@ async function taskPage(ref) {
       "div",
       { class: "panel" },
       h("h2", {}, "Depends on"),
-      task.dependsOn.length === 0 ? h("div", { class: "muted" }, "Nothing.") : h("ul", { class: "plain" }, task.dependsOn.map((id) => h("li", {}, link(id)))),
+      task.dependsOn.length === 0
+        ? h("div", { class: "muted" }, "Nothing.")
+        : h(
+            "ul",
+            { class: "plain" },
+            task.dependsOn.map((id) =>
+              h(
+                "li",
+                { class: "dep" },
+                link(id),
+                h("button", { type: "button", class: "quiet remove", "aria-label": `Remove dependency on ${byId.get(id)?.shortId ?? id.slice(0, 8)}`, onclick: () => update({ dependsOn: task.dependsOn.filter((each) => each !== id) }, undefined, depBox) }, "×"),
+              ),
+            ),
+          ),
+      taskPicker({
+        candidates: dependable(tasks, task).filter((other) => !task.dependsOn.includes(other.id)),
+        label: "Add a dependency",
+        onPick: (other) => update({ dependsOn: [...task.dependsOn, other.id] }, undefined, depBox),
+      }),
+      depBox,
       (() => {
         const dependents = tasks.filter((other) => other.dependsOn.includes(task.id));
         return dependents.length > 0 && [h("h2", { style: "margin-top:12px" }, "Needed by"), h("ul", { class: "plain" }, dependents.map((other) => h("li", {}, link(other.id))))];
@@ -831,7 +916,8 @@ function fields(task, tasks, labelList) {
   description.value = task?.description ?? "";
   // A task's criteria are edited in place on its page; only a new task takes them here.
   const criteria = !task && h("textarea", { "aria-label": "Acceptance criteria, one a line" });
-  const dependsOn = many("Depends on", tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
+  // A task's dependencies are set on its page; only a new task takes them here.
+  const dependsOn = !task && many("Depends on", tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
   const labels = many("Labels", labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
   const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
   return {
@@ -839,14 +925,14 @@ function fields(task, tasks, labelList) {
       h("label", {}, "Title"), title,
       h("label", {}, "Description"), description,
       criteria && [h("label", {}, "Acceptance criteria, one a line"), criteria],
-      h("label", {}, "Depends on"), dependsOn,
+      dependsOn && [h("label", {}, "Depends on"), dependsOn],
       h("label", {}, "Labels"), labels,
     ],
     value: () => ({
       title: title.value,
       description: description.value,
       ...(criteria && { criteria: lines(criteria).map((text) => ({ text })) }),
-      dependsOn: picked(dependsOn),
+      ...(dependsOn && { dependsOn: picked(dependsOn) }),
       labels: picked(labels),
     }),
   };
