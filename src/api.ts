@@ -59,7 +59,7 @@ export class WaypointApi {
     this.about = options.about ?? { version: "0.0.0", commit: "unknown" };
     this.publicUrl = options.publicUrl;
     this.hono = new OpenAPIHono<Env>({
-      defaultHook: (result, c) => (result.success ? undefined : fail(c, 400, "ValidationException", issues(result.error))),
+      defaultHook: (result, c) => (result.success ? undefined : fail(c, 400, "ValidationException", issues(result.error as unknown as { issues: Issue[] }))),
     });
     this.guard();
     this.routes();
@@ -222,6 +222,40 @@ export class WaypointApi {
   }
 }
 
-function issues(error: { issues: { path: PropertyKey[]; message: string }[] }): string {
-  return error.issues.map((issue) => (issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message)).join("; ");
+type Issue = { code: string; path: PropertyKey[]; message: string; [key: string]: unknown };
+
+const KINDS: Record<string, string> = { string: "text", number: "a number", int: "a whole number", boolean: "true or false", array: "a list", object: "an object" };
+
+// zod reports what it received only in its own message, unless asked to keep the input.
+const missing = (each: Issue) => each.expected === "nonoptional" || each.message.endsWith("received undefined");
+
+/** A validation issue in plain words, naming the field it is about. */
+function issue(each: Issue): string {
+  const field = each.path.reduce<string>((at, key) => (typeof key === "number" ? `${at}[${key}]` : at ? `${at}.${String(key)}` : String(key)), "") || "the body";
+  const size = (n: unknown, origin: unknown) => (origin === "string" ? `${n} characters` : origin === "array" ? `${n} items` : String(n));
+  switch (each.code) {
+    case "invalid_type":
+      return missing(each) ? `${field} is required` : `${field} must be ${KINDS[String(each.expected)] ?? String(each.expected)}`;
+    case "too_small":
+      if (each.origin === "string" && each.minimum === 1) return `${field} can't be empty`;
+      if (each.origin === "array" && each.minimum === 1) return `${field} needs at least one item`;
+      return `${field} must be at least ${size(each.minimum, each.origin)}`;
+    case "too_big":
+      return `${field} can be at most ${size(each.maximum, each.origin)}`;
+    case "invalid_value":
+      return `${field} must be one of ${(each.values as unknown[]).map(String).join(", ")}`;
+    case "unrecognized_keys":
+      return `${field} has no field ${(each.keys as string[]).join(", ")}`;
+    case "custom":
+      return each.path.length ? `${field} ${each.message}` : each.message;
+    case "invalid_format":
+      return each.format === "regex" && !each.message.startsWith("Invalid") ? `${field} ${each.message}` : `${field} isn't a valid ${String(each.format)}`;
+    default:
+      return `${field} isn't valid`;
+  }
+}
+
+/** Every issue, as one message. */
+export function issues(error: { issues: Issue[] }): string {
+  return error.issues.map(issue).join("; ");
 }

@@ -69,9 +69,9 @@ describe("done", () => {
   it("needs every criterion met and every subtask closed", () => {
     const board = new Board();
     const task = board.add({ criteria: [{ text: "builds" }], subtasks: [{ title: "write" }, { title: "drop" }] });
-    expect(() => board.update(task.id, { status: "done" })).toThrow(/criteria c1/);
+    expect(() => board.update(task.id, { status: "done" })).toThrow("criterion c1 is unmet");
     board.update(task.id, { criteria: [{ id: "c1", met: true }] });
-    expect(() => board.update(task.id, { status: "done" })).toThrow(/subtasks s1, s2/);
+    expect(() => board.update(task.id, { status: "done" })).toThrow("subtasks s1, s2 are open");
     board.update(task.id, { subtasks: [{ id: "s1", status: "done" }, { id: "s2", status: "cancelled" }] });
     expect(board.update(task.id, { status: "done" }).status).toBe("done");
   });
@@ -97,7 +97,7 @@ describe("subtasks", () => {
     const board = new Board();
     const task = board.add({ subtasks: [{ title: "a" }, { title: "b", dependsOn: ["s1"] }] });
     expect(board.update(task.id, { status: "in_progress" }).status).toBe("in_progress");
-    expect(() => board.update(task.id, { subtasks: [{ id: "s1" }, { id: "s2", status: "in_progress" }] })).toThrow(/s2 waits on s1/);
+    expect(() => board.update(task.id, { subtasks: [{ id: "s1" }, { id: "s2", status: "in_progress" }] })).toThrow("subtask s2 is blocked by s1: close it first");
     board.update(task.id, { subtasks: [{ id: "s1", status: "done" }, { id: "s2" }] });
     expect(board.update(task.id, { subtasks: [{ id: "s1" }, { id: "s2", status: "in_progress" }] }).subtasks[1]!.status).toBe("in_progress");
   });
