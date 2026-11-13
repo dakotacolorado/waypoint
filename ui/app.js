@@ -125,8 +125,31 @@ async function act(box, fn, { undo, explain } = {}) {
   }
 }
 
+const boardFor = (labelId) => `#/?label=${encodeURIComponent(labelId)}`;
+
+/** A label as a chip that shows the board filtered to it. */
+const chip = (each) => h("a", { class: "tag", href: boardFor(each.id), style: `background:${each.color}`, title: each.description || undefined }, each.name);
+
+/** A card's label chips. The card is a link already, so each chip follows its own on click rather than nesting one. */
 function chips(task, labels) {
-  return task.labels.map((id) => labels.get(id)).filter(Boolean).map((each) => h("span", { class: "tag", style: `background:${each.color}`, title: each.description }, each.name));
+  return task.labels
+    .map((id) => labels.get(id))
+    .filter(Boolean)
+    .map((each) =>
+      h(
+        "span",
+        {
+          class: "tag",
+          style: `background:${each.color}`,
+          title: each.description || undefined,
+          onclick: (e) => {
+            e.preventDefault();
+            location.hash = boardFor(each.id);
+          },
+        },
+        each.name,
+      ),
+    );
 }
 
 /** How far a task's subtasks have got, naming cancelled ones apart from done. */
@@ -206,7 +229,9 @@ async function board(params) {
   const filters = h(
     "div",
     { class: "filters" },
-    h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name))),
+    labelList.length
+      ? h("select", { onchange: (e) => set("label", e.target.value) }, h("option", { value: "" }, "Every label"), labelList.map((each) => h("option", { value: each.id, selected: each.id === only }, each.name)))
+      : h("a", { href: "#/labels" }, "No labels yet: make one"),
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: cancelled, onchange: (e) => set("cancelled", e.target.checked ? "1" : "") }), "Show cancelled"),
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: withSubtasks, onchange: (e) => set("subtasks", e.target.checked ? "1" : "") }), "Show subtasks"),
     h("span", { class: "muted" }, `${shown.length} tasks · ${shown.filter((task) => task.ready).length} ready`),
@@ -410,6 +435,7 @@ async function taskPage(ref) {
     return [err.message, ...named.map((line) => `• ${line}`)].join("\n");
   };
   const box = errorBox();
+  const labelBox = errorBox();
   /** `undo` puts the control that asked back to the stored value if the change is refused. */
   const update = (changes, undo, where = box) => act(where, () => api("PATCH", `/tasks/${task.id}`, changes), { undo, explain });
 
@@ -424,7 +450,6 @@ async function taskPage(ref) {
       h("span", {}, `· ${label(task.status)}`),
       task.ready && h("span", { class: "badge ready" }, "ready"),
       task.blockedBy.length > 0 && h("span", { class: "badge blocked" }, `blocked by ${task.blockedBy.length}`),
-      chips(task, labels),
     ),
     task.blockedBy.length > 0 && h("div", { class: "waits-on" }, "Waits on ", task.blockedBy.map((id, at) => [at > 0 && ", ", link(id)])),
     h(
@@ -443,6 +468,32 @@ async function taskPage(ref) {
       h("span", { class: "muted" }, "Assignee"),
       h("input", { value: task.assignee ?? "", placeholder: "no one", onchange: (e) => update({ assignee: e.target.value.trim() || null }, () => (e.target.value = task.assignee ?? "")) }),
     ),
+    h(
+      "div",
+      { class: "row labels" },
+      h("span", { class: "muted" }, "Labels"),
+      task.labels
+        .map((id) => labels.get(id))
+        .filter(Boolean)
+        .map((each) =>
+          h(
+            "span",
+            { class: "chip" },
+            chip(each),
+            h("button", { type: "button", class: "quiet remove", "aria-label": `Take label ${each.name} off`, title: `Take ${each.name} off`, onclick: () => update({ labels: task.labels.filter((id) => id !== each.id) }, undefined, labelBox) }, "×"),
+          ),
+        ),
+      labelList.length === 0
+        ? h("a", { href: "#/labels" }, "No labels yet: make one")
+        : labelList.some((each) => !task.labels.includes(each.id)) &&
+            h(
+              "select",
+              { "aria-label": "Add a label", onchange: (e) => e.target.value && update({ labels: [...task.labels, e.target.value] }, () => (e.target.value = ""), labelBox) },
+              h("option", { value: "" }, "Add a label…"),
+              labelList.filter((each) => !task.labels.includes(each.id)).map((each) => h("option", { value: each.id }, each.name)),
+            ),
+    ),
+    labelBox,
   );
 
   const description = h("div", { class: "panel" }, h("h2", {}, "Description"), task.description.trim() ? markdown(task.description, find) : h("div", { class: "muted" }, "Nothing written."));
@@ -621,6 +672,79 @@ async function taskPage(ref) {
   main.replaceChildren(h("div", { class: "item" }, h("div", {}, head, description, criteria, subtasks, talk), side));
 }
 
+async function labelsPage() {
+  const [labelList, tasks] = await Promise.all([all("/labels", "labels"), all("/tasks?includeCancelled=true", "tasks")]);
+  const carrying = (each) => tasks.filter((task) => task.labels.includes(each.id)).length;
+  const tasksWord = (n) => `${n} ${n === 1 ? "task" : "tasks"}`;
+  /** Name, colour and description inputs, filled from `each`. */
+  const inputs = (each) => {
+    const name = h("input", { value: each?.name ?? "", placeholder: "Name", "aria-label": "Label name", required: true, maxlength: 40 });
+    const color = h("input", { type: "color", value: each?.color ?? "#2f5bd3", "aria-label": "Label colour" });
+    const description = h("input", { value: each?.description ?? "", placeholder: "What it is for (optional)", "aria-label": "Label description", maxlength: 500, style: "flex:1" });
+    return { nodes: [name, color, description], value: () => ({ name: name.value.trim(), color: color.value, description: description.value.trim() }), focus: () => name.focus() };
+  };
+  const row = (each) => {
+    const li = h("li", { class: "label-row" });
+    const rowBox = errorBox();
+    const view = () =>
+      fill(
+        li,
+        chip(each),
+        h("span", { class: "grow" }, each.description ? each.description : h("span", { class: "muted" }, "No description.")),
+        h("a", { class: "muted", href: boardFor(each.id) }, tasksWord(carrying(each))),
+        h(
+          "span",
+          { class: "actions" },
+          h("button", { type: "button", class: "quiet", "aria-label": `Edit label ${each.name}`, onclick: edit }, "Edit"),
+          h("button", { type: "button", class: "quiet", "aria-label": `Delete label ${each.name}`, onclick: remove }, "Delete"),
+        ),
+        rowBox,
+      );
+    const edit = () => {
+      const form = inputs(each);
+      fill(
+        li,
+        h(
+          "form",
+          {
+            class: "row grow",
+            onsubmit: (e) => (e.preventDefault(), act(rowBox, () => api("PATCH", `/labels/${each.id}`, form.value()))),
+            onkeydown: (e) => e.key === "Escape" && (e.preventDefault(), view()),
+          },
+          form.nodes,
+          h("button", { type: "submit", class: "primary" }, "Save"),
+          h("button", { type: "button", onclick: view }, "Cancel"),
+        ),
+        rowBox,
+      );
+      form.focus();
+    };
+    const remove = () => {
+      const n = carrying(each);
+      if (confirm(`Delete label ${each.name}? ${n ? `${tasksWord(n)} ${n === 1 ? "carries" : "carry"} it and will lose it.` : "No task carries it."}`)) act(rowBox, () => api("DELETE", `/labels/${each.id}`));
+    };
+    view();
+    return li;
+  };
+  const create = inputs(null);
+  const box = errorBox();
+  main.replaceChildren(
+    h(
+      "div",
+      { class: "panel" },
+      h("h1", {}, "Labels"),
+      labelList.length === 0 ? h("p", { class: "muted" }, "No labels yet. A label groups tasks: the board filters by it.") : h("ul", { class: "plain" }, labelList.map(row)),
+    ),
+    h(
+      "form",
+      { class: "panel", onsubmit: (e) => (e.preventDefault(), act(box, () => api("POST", "/labels", create.value()))) },
+      h("h2", {}, "New label"),
+      h("div", { class: "row" }, create.nodes, h("button", { type: "submit", class: "primary" }, "Create")),
+      box,
+    ),
+  );
+}
+
 /** A multi-select of `options`, each `[value, text]`, with `chosen` selected. */
 const many = (options, chosen) => h("select", { multiple: true, size: Math.min(6, Math.max(2, options.length)) }, options.map(([value, text]) => h("option", { value, selected: chosen.includes(value) }, text)));
 const picked = (select) => [...select.selectedOptions].map((option) => option.value);
@@ -719,6 +843,7 @@ async function route() {
     const task = /^\/task\/(.+)$/.exec(path ?? "");
     if (task) await taskPage(decodeURIComponent(task[1]));
     else if (path === "/new") await newTask();
+    else if (path === "/labels") await labelsPage();
     else await board(params);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;
