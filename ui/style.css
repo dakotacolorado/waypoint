@@ -15,11 +15,18 @@ header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; back
 .brand svg { height: 16px; width: auto; color: var(--mark); }
 nav { display: flex; gap: 16px; align-items: center; flex: 1; }
 nav #signout { margin-left: auto; }
+nav a, nav button { white-space: nowrap; }
+@media (max-width: 520px) {
+  header { gap: 8px; padding: 8px; }
+  nav { gap: 8px; }
+  .brand span { display: none; }
+  nav #signout { padding: 3px 6px; }
+}
 main { padding: 20px; max-width: 1400px; margin: 0 auto; }
 button, select, input, textarea { font: inherit; color: inherit; }
 button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.danger { color: var(--bad); }
+button.danger, button.quiet.danger { color: var(--bad); }
 button:disabled { opacity: .5; cursor: default; }
 input, select, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 textarea { width: 100%; min-height: 80px; resize: vertical; }
@@ -27,7 +34,8 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px
 .filters { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .board { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: 12px; align-items: start; }
 .board.cols-5 { grid-template-columns: repeat(5, minmax(180px, 1fr)); }
-.column { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 120px; }
+.column { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.column .empty { font-size: 12px; margin: 0 4px 2px; }
 .column h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 2px 4px 8px; display: flex; justify-content: space-between; }
 .card { display: block; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; color: var(--ink); background: var(--bg); }
 .card:hover { border-color: var(--accent); text-decoration: none; }
@@ -35,7 +43,7 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px
 .meta { color: var(--muted); font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 11px; border: 1px solid var(--line); color: var(--muted); }
 .badge.blocked { border-color: var(--bad); color: var(--bad); } .badge.ready { border-color: var(--ok); color: var(--ok); } .badge.closed { border-color: var(--ok); color: var(--ok); }
-.tag { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 11px; color: #fff; cursor: pointer; }
+.tag { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 11px; cursor: pointer; }
 a.tag:hover { text-decoration: none; filter: brightness(1.1); }
 .chip { display: inline-flex; align-items: center; }
 .chip .remove { padding: 0 4px; color: var(--muted); }
@@ -97,3 +105,4 @@ ul.card-subtasks .badge { flex: none; }
 .md pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-x: auto; margin: 0 0 6px; }
 .md pre code { border: 0; padding: 0; }
 .change { overflow-wrap: anywhere; font-size: 13px; }
+.saved { color: var(--ok); font-size: 12px; }

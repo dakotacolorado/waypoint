@@ -105,7 +105,7 @@ const when = (iso) => new Date(iso).toLocaleString();
 const label = (status) => status.replace("_", " ");
 /** `el` holding `children` as `h` would make them. */
 const fill = (el, ...children) => el.replaceChildren(...h("div", {}, ...children).childNodes);
-const errorBox = () => h("div", { class: "error", hidden: true });
+const errorBox = () => h("div", { class: "error", role: "alert", hidden: true });
 const show = (box, err) => {
   box.hidden = false;
   box.textContent = err.message;
@@ -125,10 +125,21 @@ async function act(box, fn, { undo, explain } = {}) {
   }
 }
 
+/** Black or white, whichever reads better on `color` (#rrggbb): at least 4.5:1 for any colour. */
+function inkOn(color) {
+  const channel = (at) => {
+    const value = parseInt(color.slice(at, at + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000" : "#fff";
+}
+const tagStyle = (each) => `background:${each.color};color:${inkOn(each.color)}`;
+
 const boardFor = (labelId) => `#/?label=${encodeURIComponent(labelId)}`;
 
 /** A label as a chip that shows the board filtered to it. */
-const chip = (each) => h("a", { class: "tag", href: boardFor(each.id), style: `background:${each.color}`, title: each.description || undefined }, each.name);
+const chip = (each) => h("a", { class: "tag", href: boardFor(each.id), style: tagStyle(each), title: each.description || undefined }, each.name);
 
 /** A card's label chips. The card is a link already, so each chip follows its own on click rather than nesting one. */
 function chips(task, labels) {
@@ -140,7 +151,7 @@ function chips(task, labels) {
         "span",
         {
           class: "tag",
-          style: `background:${each.color}`,
+          style: tagStyle(each),
           title: each.description || undefined,
           onclick: (e) => {
             e.preventDefault();
@@ -276,6 +287,7 @@ async function board(params) {
       "section",
       { class: "column" },
       h("h2", {}, h("span", {}, label(status)), h("span", {}, here.length)),
+      here.length === 0 && h("div", { class: "muted empty" }, "Nothing here"),
       here.map((task) =>
         h(
           "a",
@@ -442,7 +454,12 @@ function subtaskEditor(sub, { onSave, onCancel, saveText = "Save" }) {
   return { el, focus: () => title.focus() };
 }
 
+/** The field a write from the task page just saved, said once on the redraw that follows it. */
+let justSaved = null;
+
 async function taskPage(ref) {
+  const saved = justSaved;
+  justSaved = null;
   const { task } = await api("GET", `/tasks/${encodeURIComponent(ref)}`);
   const [tasks, labelList, comments, history] = await Promise.all([
     all("/tasks?includeCancelled=true", "tasks"),
@@ -499,10 +516,10 @@ async function taskPage(ref) {
     h(
       "div",
       { class: "row" },
-      h("select", { onchange: (e) => update({ status: e.target.value }, () => (e.target.value = task.status)) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
+      h("select", { "aria-label": "Status", onchange: (e) => update({ status: e.target.value }, () => (e.target.value = task.status)) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
       CLOSED.includes(task.status)
         ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
-        : [h("button", { onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
+        : [h("button", { class: "primary", onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { class: "quiet danger", onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
       h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
       h("button", { class: "danger", onclick: deleteTask }, "Delete"),
     ),
@@ -510,8 +527,22 @@ async function taskPage(ref) {
     h(
       "div",
       { class: "row" },
-      h("span", { class: "muted" }, "Assignee"),
-      h("input", { value: task.assignee ?? "", placeholder: "no one", onchange: (e) => update({ assignee: e.target.value.trim() || null }, () => (e.target.value = task.assignee ?? "")) }),
+      h("span", { class: "muted", id: "assignee-label" }, "Assignee"),
+      h("input", {
+        value: task.assignee ?? "",
+        placeholder: "no one",
+        "aria-labelledby": "assignee-label",
+        onchange: (e) =>
+          act(
+            box,
+            async () => {
+              await api("PATCH", `/tasks/${task.id}`, { assignee: e.target.value.trim() || null });
+              justSaved = "assignee";
+            },
+            { undo: () => (e.target.value = task.assignee ?? ""), explain },
+          ),
+      }),
+      saved === "assignee" && h("span", { class: "saved", role: "status" }, "Saved"),
     ),
     h(
       "div",
@@ -617,7 +648,7 @@ async function taskPage(ref) {
         li,
         h(
           "select",
-          { onchange: (e) => send(subtasksWith(sub, { status: e.target.value }), () => (e.target.value = sub.status)) },
+          { "aria-label": `Status of subtask ${sub.id}`, onchange: (e) => send(subtasksWith(sub, { status: e.target.value }), () => (e.target.value = sub.status)) },
           STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
         ),
         h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
@@ -791,17 +822,17 @@ async function labelsPage() {
 }
 
 /** A multi-select of `options`, each `[value, text]`, with `chosen` selected. */
-const many = (options, chosen) => h("select", { multiple: true, size: Math.min(6, Math.max(2, options.length)) }, options.map(([value, text]) => h("option", { value, selected: chosen.includes(value) }, text)));
+const many = (name, options, chosen) => h("select", { multiple: true, "aria-label": name, size: Math.min(6, Math.max(2, options.length)) }, options.map(([value, text]) => h("option", { value, selected: chosen.includes(value) }, text)));
 const picked = (select) => [...select.selectedOptions].map((option) => option.value);
 
 function fields(task, tasks, labelList) {
-  const title = h("input", { value: task?.title ?? "", style: "width:100%", required: true });
-  const description = h("textarea", { style: "min-height:160px" });
+  const title = h("input", { value: task?.title ?? "", style: "width:100%", required: true, "aria-label": "Title" });
+  const description = h("textarea", { style: "min-height:160px", "aria-label": "Description" });
   description.value = task?.description ?? "";
   // A task's criteria are edited in place on its page; only a new task takes them here.
-  const criteria = !task && h("textarea", {});
-  const dependsOn = many(tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
-  const labels = many(labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
+  const criteria = !task && h("textarea", { "aria-label": "Acceptance criteria, one a line" });
+  const dependsOn = many("Depends on", tasks.filter((other) => other.id !== task?.id).map((other) => [other.id, `${other.shortId} ${other.title}`]), task?.dependsOn ?? []);
+  const labels = many("Labels", labelList.map((each) => [each.id, each.name]), task?.labels ?? []);
   const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
   return {
     nodes: [
@@ -851,7 +882,7 @@ function editForm(task, tasks, labelList) {
 async function newTask() {
   const [tasks, labelList] = await Promise.all([all("/tasks", "tasks"), all("/labels", "labels")]);
   const form = fields(null, tasks, labelList);
-  const subtasks = h("textarea", {});
+  const subtasks = h("textarea", { "aria-label": "Subtasks, one a line" });
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -892,7 +923,7 @@ async function route() {
     else await board(params);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;
-    main.replaceChildren(h("div", { class: "panel error" }, err.message));
+    main.replaceChildren(h("div", { class: "panel error", role: "alert" }, err.message));
   }
 }
 
