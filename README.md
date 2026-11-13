@@ -1,8 +1,10 @@
 # waypoint
 
-A task tracker with dependency and status management. Tasks can wait on other
-tasks, and waypoint keeps a task from being started before what it waits on is
-closed, or finished before its acceptance criteria are met.
+Know where you're going, and each step that gets you there.
+
+A task tracker with dependency and status management. A task depends on other
+tasks, and waypoint keeps it from being started while it is blocked by one still
+open, or finished before its acceptance criteria are met.
 
 One Node process serves an HTTP API, an MCP server and a web page, and keeps
 everything in one SQLite file.
@@ -22,7 +24,7 @@ npx github:dakotacolorado/waypoint
  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝      ╚═════╝ ╚═╝╚═╝  ╚═══╝   ╚═╝          ██
 📍 v0.2.0
 
-Know where the work is, and what it waits on.
+Know where you're going, and each step that gets you there.
 A task tracker with dependency and status management.
 
   ▸ Page      http://127.0.0.1:4400/

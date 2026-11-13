@@ -1,11 +1,12 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { SUMMARY } from "./banner.ts";
 import { ROUTES } from "./schema.ts";
 
 /** The API's version, dated as AWS dates theirs: changed only when the contract is. */
 export const API_VERSION = "2026-11-12";
 
 /** The API's overview, at the top of its docs. Markdown. */
-export const OVERVIEW = `A task tracker with dependency and status management. Tasks can wait on other tasks, and the service keeps a task from being started before what it waits on is closed, or finished before its acceptance criteria are met.
+export const OVERVIEW = `${SUMMARY} A task depends on other tasks, and the service keeps it from being started while it is blocked by one still open, or finished before its acceptance criteria are met.
 
 - \`status\` is one of \`backlog\`, \`in_progress\`, \`review\`, \`done\` or \`cancelled\`. \`done\` and \`cancelled\` are the closed statuses.
 - A task **depends on** other tasks, and is **ready** when it is in \`backlog\` and every task it depends on is closed.

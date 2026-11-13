@@ -2,7 +2,7 @@
 
 API version 2026-11-12
 
-A task tracker with dependency and status management. Tasks can wait on other tasks, and the service keeps a task from being started before what it waits on is closed, or finished before its acceptance criteria are met.
+A task tracker with dependency and status management. A task depends on other tasks, and the service keeps it from being started while it is blocked by one still open, or finished before its acceptance criteria are met.
 
 - `status` is one of `backlog`, `in_progress`, `review`, `done` or `cancelled`. `done` and `cancelled` are the closed statuses.
 - A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.
@@ -203,7 +203,7 @@ Where it stands. `done` and `cancelled` are the closed statuses.
 Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
 
 **dependsOn**  
-The IDs of the tasks this one waits on.  
+The IDs of the tasks this one depends on.  
 Type: Array of strings. At most 50 items. Required: No.
 
 **subtasks**  
@@ -428,7 +428,7 @@ Where it stands. `done` and `cancelled` are the closed statuses.
 Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
 
 **dependsOn**  
-The IDs of the tasks this one waits on.  
+The IDs of the tasks this one depends on.  
 Type: Array of strings. At most 50 items. Required: No.
 
 **subtasks**  
@@ -1165,7 +1165,7 @@ Where it stands. `done` and `cancelled` are the closed statuses.
 Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: Yes.
 
 **dependsOn**  
-The IDs of the tasks this one waits on.  
+The IDs of the tasks this one depends on.  
 Type: Array of strings. Required: Yes.
 
 **subtasks**  
@@ -1221,7 +1221,7 @@ Where it stands. `done` and `cancelled` are the closed statuses.
 Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: Yes.
 
 **dependsOn**  
-The IDs of the subtasks of the same task this one waits on.  
+The IDs of the subtasks of the same task this one depends on.  
 Type: Array of strings. Required: Yes.
 
 **blockedBy**  
@@ -1265,7 +1265,7 @@ What went wrong.
 Type: String. Required: Yes.
 
 **blockedBy**  
-The open tasks, or subtasks, it waits on.  
+The open tasks, or subtasks, it is blocked by.  
 Type: Array of strings. Required: No.
 
 **unmetCriteria**  
@@ -1301,7 +1301,7 @@ Where the step stands. Omit it to leave it as it stands when the write lands; a 
 Type: String. Valid values: `backlog` | `in_progress` | `review` | `done` | `cancelled`. Required: No.
 
 **dependsOn**  
-The IDs of subtasks of the same task this one waits on.  
+The IDs of subtasks of the same task this one depends on.  
 Type: Array of strings. At most 50 items. Required: No.
 
 ## CriterionInput

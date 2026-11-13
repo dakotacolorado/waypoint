@@ -236,7 +236,7 @@ async function taskPage(ref) {
       h("select", { onchange: (e) => update({ status: e.target.value }) }, STATUSES.map((status) => h("option", { value: status, selected: status === task.status }, label(status)))),
       CLOSED.includes(task.status)
         ? h("button", { onclick: () => update({ status: "backlog" }) }, "Reopen")
-        : [h("button", { onclick: () => update({ status: "done" }) }, "Close as completed"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Close as cancelled")],
+        : [h("button", { onclick: () => update({ status: "done" }) }, "Mark done"), h("button", { onclick: () => update({ status: "cancelled" }) }, "Cancel task")],
       h("button", { onclick: () => editForm(task, tasks, labelList) }, "Edit"),
     ),
     h(
@@ -300,7 +300,7 @@ async function taskPage(ref) {
                 STATUSES.map((status) => h("option", { value: status, selected: status === sub.status }, label(status))),
               ),
               h("span", { class: sub.status === "cancelled" ? "struck" : "" }, h("span", { class: "muted" }, `${sub.id} `), sub.title),
-              sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `after ${sub.dependsOn.join(", ")}`),
+              sub.dependsOn.length > 0 && h("span", { class: sub.blockedBy.length ? "badge blocked" : "muted" }, `depends on ${sub.dependsOn.join(", ")}`),
               sub.description && h("div", { class: "muted body" }, sub.description),
             ),
           ),
@@ -337,7 +337,7 @@ async function taskPage(ref) {
       task.dependsOn.length === 0 ? h("div", { class: "muted" }, "Nothing.") : h("ul", { class: "plain" }, task.dependsOn.map((id) => h("li", {}, link(id)))),
       (() => {
         const dependents = tasks.filter((other) => other.dependsOn.includes(task.id));
-        return dependents.length > 0 && [h("h2", { style: "margin-top:12px" }, "Waited on by"), h("ul", { class: "plain" }, dependents.map((other) => h("li", {}, link(other.id))))];
+        return dependents.length > 0 && [h("h2", { style: "margin-top:12px" }, "Needed by"), h("ul", { class: "plain" }, dependents.map((other) => h("li", {}, link(other.id))))];
       })(),
     ),
     h(

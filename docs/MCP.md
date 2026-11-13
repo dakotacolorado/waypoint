@@ -24,10 +24,10 @@ answered as that request would be. A refusal comes back as the tool's error, wit
 
 What the server tells an agent when it connects:
 
-> waypoint is a task tracker with dependency and status management.
+> waypoint: A task tracker with dependency and status management.
 >
 > - status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.
-> - A task is ready when it is in backlog and every task it depends on is closed.
+> - A task depends on the tasks in its dependsOn, and is blocked by those still open (blockedBy). It is ready when it is in backlog and every task it depends on is closed.
 > - A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.
 > - In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.
 > - A task ID may be given as its shortId.
@@ -73,7 +73,7 @@ Creates a task in backlog, unless status says otherwise.
 | `title` | string | yes | A short name for the task. |
 | `description` | string |  | What the task is, in Markdown. |
 | `status` | `backlog`, `in_progress`, `review`, `done`, `cancelled` |  | Where it stands. `done` and `cancelled` are the closed statuses. |
-| `dependsOn` | string[] |  | The IDs of the tasks this one waits on. |
+| `dependsOn` | string[] |  | The IDs of the tasks this one depends on. |
 | `subtasks` | object[] |  | The steps of the work, in order. On update this is the whole list: a subtask left out is removed. |
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |
@@ -98,7 +98,7 @@ Changes the fields given. Cancelling a task cancels its open subtasks.
 | `title` | string |  | A short name for the task. |
 | `description` | string |  | What the task is, in Markdown. |
 | `status` | `backlog`, `in_progress`, `review`, `done`, `cancelled` |  | Where it stands. `done` and `cancelled` are the closed statuses. |
-| `dependsOn` | string[] |  | The IDs of the tasks this one waits on. |
+| `dependsOn` | string[] |  | The IDs of the tasks this one depends on. |
 | `subtasks` | object[] |  | The steps of the work, in order. On update this is the whole list: a subtask left out is removed. |
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |

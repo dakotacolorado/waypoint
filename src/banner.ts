@@ -1,4 +1,4 @@
-/** waypoint's mark: its name in block letters and a pixel map pin, as honed has a sword. */
+/** waypoint's mark: its name in block letters beside a pixel map pin. */
 
 const LETTERS = [
   "██╗    ██╗ █████╗ ██╗   ██╗██████╗  ██████╗ ██╗███╗   ██╗████████╗",
@@ -44,8 +44,8 @@ export const LETTERS_ONLY = LETTERS.join("\n");
 const WIDTH = Math.max(...LETTERS.map((line) => line.length));
 export const WORDMARK = LETTERS.map((line, i) => `${line.padEnd(WIDTH)}  ${PIN[i]}`.trimEnd()).join("\n");
 
-export const TAGLINE = "Know where the work is, and what it waits on.";
-/** What waypoint is, in one line. */
+export const TAGLINE = "Know where you're going, and each step that gets you there.";
+/** What waypoint is, in one line. Every place that describes waypoint in a line uses this or TAGLINE, verbatim. */
 export const SUMMARY = "A task tracker with dependency and status management.";
 
 /** The pin as an SVG drawn from its pixel grid, in the page's accent color. */
