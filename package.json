@@ -1,6 +1,6 @@
 {
   "name": "@dakotajp/waypoint",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A task tracker with dependency and status management.",
   "keywords": [
     "task-tracker",

@@ -172,6 +172,8 @@ export const listTasks = createRoute({
       ready: z.enum(["true", "false"]).optional().describe("`true` for only tasks that can be started now; `false` for only those that can't."),
       label: z.string().optional().describe("Only tasks with this label, by ID or name."),
       assignee: z.string().optional().describe("Only tasks assigned to this; `none` for only unassigned tasks."),
+      dependsOn: z.string().optional().describe("Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long; none when no task has it."),
+      q: z.string().trim().min(1).max(200).optional().describe("Only tasks whose title or description contains this text, ignoring case."),
       includeCancelled: z.enum(["true", "false"]).optional().describe("`true` to include cancelled tasks."),
       maxResults: MaxResults,
       nextToken: NextToken,
@@ -179,7 +181,7 @@ export const listTasks = createRoute({
   },
   responses: {
     200: json(z.object({ tasks: z.array(TaskSchema).describe("The tasks."), ...Page }).openapi("ListTasksResponse"), "Success."),
-    ...errors({ 400: INVALID }),
+    ...errors({ 400: INVALID, 409: AMBIGUOUS }),
   },
 });
 

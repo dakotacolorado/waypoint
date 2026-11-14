@@ -51,7 +51,7 @@ Returns tasks matching every filter given, oldest first. Cancelled tasks are lef
 ### Request syntax
 
 ```http
-GET /tasks?status=status&ready=ready&label=label&assignee=assignee&includeCancelled=includeCancelled&maxResults=maxResults&nextToken=nextToken HTTP/1.1
+GET /tasks?status=status&ready=ready&label=label&assignee=assignee&dependsOn=dependsOn&q=q&includeCancelled=includeCancelled&maxResults=maxResults&nextToken=nextToken HTTP/1.1
 Authorization: Bearer token
 ```
 
@@ -72,6 +72,14 @@ Type: String. Required: No.
 **assignee**  
 Only tasks assigned to this; `none` for only unassigned tasks.  
 Type: String. Required: No.
+
+**dependsOn**  
+Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long; none when no task has it.  
+Type: String. Required: No.
+
+**q**  
+Only tasks whose title or description contains this text, ignoring case.  
+Type: String. Length: 1 to 200. Required: No.
 
 **includeCancelled**  
 `true` to include cancelled tasks.  
@@ -144,6 +152,10 @@ HTTP status: 400
 **UnauthorizedException**  
 The `Authorization` header is missing, or its token isn't one this service issued.  
 HTTP status: 401
+
+**ConflictException**  
+The short ID matches more than one task; `matches` lists them.  
+HTTP status: 409
 
 ---
 

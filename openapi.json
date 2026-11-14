@@ -895,6 +895,28 @@
           {
             "schema": {
               "type": "string",
+              "description": "Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long; none when no task has it."
+            },
+            "required": false,
+            "description": "Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long; none when no task has it.",
+            "name": "dependsOn",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Only tasks whose title or description contains this text, ignoring case."
+            },
+            "required": false,
+            "description": "Only tasks whose title or description contains this text, ignoring case.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "true",
                 "false"
@@ -952,6 +974,16 @@
           },
           "401": {
             "description": "UnauthorizedException: The `Authorization` header is missing, or its token isn't one this service issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictException: The short ID matches more than one task; `matches` lists them.",
             "content": {
               "application/json": {
                 "schema": {

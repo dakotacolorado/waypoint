@@ -55,6 +55,7 @@ describe("the MCP server", () => {
     expect(refused.json()).toMatchObject({ code: "ConflictException", blockedBy: [first.id] });
     await use(admin, "update_task", { taskId: first.id, status: "done" });
     expect((await use(fleet, "list_tasks", { ready: true })).json<{ tasks: TaskView[] }>().tasks.map((each) => each.title)).toEqual(["second"]);
+    expect((await use(fleet, "list_tasks", { dependsOn: first.shortId, q: "SEC" })).json<{ tasks: TaskView[] }>().tasks.map((each) => each.title)).toEqual(["second"]);
     await use(fleet, "create_comment", { taskId: task.id, body: "on it" }, "agent-7");
     expect((await use(admin, "list_comments", { taskId: task.id })).json<{ comments: { author: string }[] }>().comments).toEqual([expect.objectContaining({ author: "agent-7" })]);
     const { entries } = (await use(admin, "list_task_history", { taskId: task.id })).json<{ entries: HistoryEntry[] }>();

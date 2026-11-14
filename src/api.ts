@@ -95,13 +95,18 @@ export class WaypointApi {
       const tasks = await this.store.tasks();
       // A label no task can have matches none, rather than refusing the list.
       const label = q.label === undefined ? null : ((await this.store.labels()).all().find((each) => each.id === q.label || each.name.toLowerCase() === q.label!.toLowerCase())?.id ?? "");
+      // So too a task no task can depend on; a prefix of more than one is refused, as GetTask refuses it.
+      const dependsOn = q.dependsOn === undefined ? null : dependedOn(() => tasks.find(q.dependsOn!).id);
+      const text = q.q === undefined ? null : q.q.toLowerCase();
       const wanted = tasks
         .all()
         .map((task) => tasks.view(task))
         .filter((task) => (q.status ? task.status === q.status : task.status !== "cancelled" || q.includeCancelled === "true"))
         .filter((task) => q.ready === undefined || task.ready === (q.ready === "true"))
         .filter((task) => label === null || task.labels.includes(label))
-        .filter((task) => q.assignee === undefined || task.assignee === (q.assignee === "none" ? null : q.assignee));
+        .filter((task) => q.assignee === undefined || task.assignee === (q.assignee === "none" ? null : q.assignee))
+        .filter((task) => dependsOn === null || task.dependsOn.includes(dependsOn))
+        .filter((task) => text === null || task.title.toLowerCase().includes(text) || task.description.toLowerCase().includes(text));
       const { page: result, nextToken } = page(wanted, q.maxResults, q.nextToken);
       return c.json({ tasks: result, nextToken }, 200);
     });
@@ -256,4 +261,14 @@ function issue(each: Issue): string {
 /** Every issue, as one message. */
 export function issues(error: { issues: Issue[] }): string {
   return error.issues.map(issue).join("; ");
+}
+
+/** The id `find` gives, or "" (which no task depends on) when no task has it. */
+function dependedOn(find: () => string): string {
+  try {
+    return find();
+  } catch (err) {
+    if (err instanceof NotFoundError) return "";
+    throw err;
+  }
 }

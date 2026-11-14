@@ -60,7 +60,9 @@ Returns tasks matching every filter given, oldest first. Cancelled tasks are lef
 | `ready` | boolean |  | true for only tasks that can be started now. |
 | `label` | string |  | Only tasks with this label, by ID or name. |
 | `assignee` | string |  | Only tasks assigned to this; none for unassigned tasks. |
-| `includeCancelled` | boolean |  |  |
+| `dependsOn` | string |  | Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long. |
+| `q` | string |  | Only tasks whose title or description contains this text, ignoring case. |
+| `includeCancelled` | boolean |  | true to include cancelled tasks. |
 | `maxResults` | integer |  | The most results to return. Default 100. |
 | `nextToken` | string |  | The nextToken from the previous page. |
 
