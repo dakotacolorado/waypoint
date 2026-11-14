@@ -7,9 +7,10 @@ import type { Comment } from "./store.ts";
 /**
  * A one-way copy of work-tracker-service's items into waypoint, keeping their
  * ids, timestamps and authors, so it writes the database directly rather than
- * through the API, which draws its own. Each old epic and story is a task with
- * its id; each old task is a subtask of its story's task. Run again, it adds
- * only what is new and updates only what it wrote and nobody has changed since.
+ * through the API, which draws its own. Each old epic is a task with its id,
+ * each of its stories a subtask of it, a story's old tasks a list in that
+ * subtask's description. Run again, it adds only what is new and updates only
+ * what it wrote and nobody has changed since.
  */
 
 // --- work-tracker-service, as its API gives it -----------------------------
@@ -105,14 +106,14 @@ export function statusOf(item: Pick<OldItem, "status" | "state" | "closedReason"
   return item.status === "ready" ? "backlog" : item.status;
 }
 
-/** The label naming an old epic, on it and on each of its stories. */
-export const epicLabelName = (epic: Pick<OldItem, "shortId">) => `epic:${epic.shortId}`;
-
 /** A UUID drawn from `seed`, so a second run makes the same one. */
 export function seededId(seed: string): string {
   const hex = createHash("sha256").update(seed).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16]!, 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+
+/** The id of the `epic:<shortId>` label an import before 0.6.0 made for an old epic, which `--remove` deletes. */
+export const epicLabelId = (epicId: string) => seededId(`work-tracker epic label ${epicId}`);
 
 const historyKey = (entry: OldHistoryEntry) => createHash("sha256").update(JSON.stringify([entry.item, entry.at, entry.action, entry.changes])).digest("hex");
 
@@ -141,17 +142,35 @@ const criteriaOf = (item: OldItem, history: OldHistoryEntry[]): Criterion[] => {
   });
 };
 
-/** An old task's body, then where it came from, its criteria and any dependency a subtask can't hold. */
-function subtaskDescription(task: OldItem, outside: OldItem[], missing: string[]): string {
-  const lines = [`Imported from work-tracker task \`${task.id}\` (\`${task.shortId}\`).`];
-  if (task.acceptanceCriteria.length) {
-    const met = new Set(task.met.map((tick) => tick.criterion));
-    lines.push("", "Acceptance criteria:", ...task.acceptanceCriteria.map((text) => `- [${met.has(text) ? "x" : " "}] ${text}`));
-  }
+const tickedAtImport = (item: OldItem, criteria: Criterion[]) =>
+  criteria.some((criterion) => criterion.metBy === IMPORT_ACTOR && !item.met.some((tick) => tick.criterion === criterion.text));
+
+/** The API's limit on a description. */
+const MAX_DESCRIPTION = 20_000;
+const TASK_BODY_SHOWN = 300;
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+const describe = (body: string, extra: string[]) => clip([body, extra.join("\n")].filter(Boolean).join("\n\n---\n"), MAX_DESCRIPTION);
+
+/** An old story's tasks as a checklist, each with the start of its body indented beneath. */
+const taskList = (tasks: OldItem[]): string[] => [
+  "Tasks:",
+  ...tasks.flatMap((task) => {
+    const status = statusOf(task);
+    const body = task.body.trim() ? clip(task.body.trim(), TASK_BODY_SHOWN).split("\n").map((line) => `  ${line}`.trimEnd()) : [];
+    return [`- [${status === "done" ? "x" : " "}] ${task.title} (task \`${task.shortId}\`${status === "done" ? "" : `, ${status}`})`, ...body];
+  }),
+];
+
+/** An old story as a subtask's description: its body, criteria, old ids, what it depends on outside its epic, and its tasks. */
+function storyDescription(story: OldItem, criteria: Criterion[], tasks: OldItem[], outside: OldItem[], missing: string[]): string {
+  const lines: string[] = [];
+  if (criteria.length) lines.push("Acceptance criteria:", ...criteria.map((each) => `- [${each.met ? "x" : " "}] ${each.text}`), "");
+  lines.push(`Was story \`${story.shortId}\` (\`${story.id}\`).`);
   if (outside.length || missing.length) {
-    lines.push("", `Depended on, outside this task: ${[...outside.map((dep) => `\`${dep.shortId}\` (${dep.type})`), ...missing.map((id) => `\`${id}\``)].join(", ")}.`);
+    lines.push("", `Depends on, outside this epic: ${[...outside.map((dep) => `\`${dep.shortId}\` (${dep.type})`), ...missing.map((id) => `\`${id}\``)].join(", ")}.`);
   }
-  return [task.body, lines.join("\n")].filter(Boolean).join("\n\n---\n");
+  if (tasks.length) lines.push("", ...taskList(tasks));
+  return describe(story.body, lines);
 }
 
 const withLinks = (entry: OldComment) => (entry.links?.length ? `${entry.body}\n\nLinks:\n${entry.links.map((link) => `- ${link}`).join("\n")}` : entry.body);
@@ -177,12 +196,50 @@ export interface Report {
   criteriaTickedAtImport: string[];
   /** Imported as `done` with criteria unmet, which waypoint refuses any update to until they are met or it moves: none, since the import ticks them. */
   doneWithUnmetCriteria: string[];
+  /** Imported as `done` with a subtask still open, which waypoint refuses any update to until it closes or the task moves. */
+  doneWithOpenSubtasks: string[];
+  /** Stories with no epic and old tasks with no story: each a task of its own. */
+  ownTasks: { stories: string[]; tasks: string[] };
+  /** Stories and old tasks an earlier import made tasks of, still there: `--remove` deletes them. */
+  stale: string[];
 }
 
 /** The store refuses to commit a write decided before this one, and decides it again. */
 function bumpVersion(db: DatabaseSync): void {
   const row = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as { value: string } | undefined;
   db.prepare("INSERT INTO meta (key, value) VALUES ('version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(String(Number(row?.value ?? 0) + 1));
+}
+
+/** Runs `write` in one transaction, rolled back on a dry run; bumps the version if it wrote. */
+function transaction<T>(db: DatabaseSync, dryRun: boolean, write: () => { result: T; wrote: number }): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const { result, wrote } = write();
+    if (dryRun) db.exec("ROLLBACK");
+    else {
+      if (wrote) bumpVersion(db);
+      db.exec("COMMIT");
+    }
+    return result;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+/** How the old items nest: an epic's stories and a story's tasks, each in creation order, and those that stand alone. */
+function shape(items: OldItem[]) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const parentOf = (item: OldItem) => {
+    const parent = item.parent ? byId.get(item.parent) : undefined;
+    return (item.type === "story" && parent?.type === "epic") || (item.type === "task" && parent?.type === "story") ? parent.id : null;
+  };
+  const childrenOf = new Map<string, OldItem[]>();
+  for (const item of [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const parent = parentOf(item);
+    if (parent) childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), item]);
+  }
+  return { byId, parentOf, children: (id: string) => childrenOf.get(id) ?? [], top: items.filter((item) => item.type === "epic" || !parentOf(item)) };
 }
 
 /**
@@ -192,7 +249,8 @@ function bumpVersion(db: DatabaseSync): void {
  */
 export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = false } = {}): Report {
   db.exec(SCHEMA);
-  const byId = new Map(source.items.map((item) => [item.id, item]));
+  const { byId, parentOf, children, top } = shape(source.items);
+  const topIds = new Set(top.map((item) => item.id));
   const detail = (id: string) => source.detail[id] ?? { history: [], comments: [], workLog: [] };
   const report: Report = {
     dryRun,
@@ -206,6 +264,12 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
     labelsShared: [],
     criteriaTickedAtImport: [],
     doneWithUnmetCriteria: [],
+    doneWithOpenSubtasks: [],
+    ownTasks: {
+      stories: top.filter((item) => item.type === "story").map((item) => item.shortId),
+      tasks: top.filter((item) => item.type === "task").map((item) => item.shortId),
+    },
+    stale: [],
   };
   for (const item of source.items) {
     const key = `${item.type} ${statusOf(item)}`;
@@ -246,76 +310,63 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
     return true;
   };
 
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    // Labels: each tag, and one per epic with stories.
+  return transaction(db, dryRun, () => {
+    // Labels: one per tag.
     const nativeByName = new Map(
       (db.prepare("SELECT id, record FROM labels").all() as { id: string; record: string }[])
         .filter((row) => tracked("label", row.id) === undefined)
         .map((row) => [(JSON.parse(row.record) as Label).name.toLowerCase(), row.id]),
     );
     const labelId = new Map<string, string>();
-    const putLabel = (key: string, label: Label) => {
-      const shared = nativeByName.get(label.name.toLowerCase());
-      if (shared && shared !== label.id) {
-        report.labelsShared.push({ tag: label.name, label: shared });
-        labelId.set(key, shared);
-        return;
-      }
-      upsert("labels", "label", label, report.labels);
-      labelId.set(key, label.id);
-    };
     for (const tag of source.tags) {
-      putLabel(tag.id, { id: tag.id, name: tag.value, color: tag.color, description: tag.description, createdAt: tag.createdAt, updatedAt: tag.updatedAt });
-    }
-    const epicsWithStories = new Set(source.items.filter((item) => item.type === "story" && item.parent).map((item) => item.parent!));
-    for (const epic of source.items.filter((item) => item.type === "epic" && epicsWithStories.has(item.id))) {
-      const id = seededId(`work-tracker epic label ${epic.id}`);
-      putLabel(epic.id, { id, name: epicLabelName(epic), color: "#808080", description: epic.title.slice(0, 500), createdAt: epic.createdAt, updatedAt: epic.createdAt });
-    }
-
-    // Tasks: every epic and story, its old tasks as subtasks.
-    const tasksOf = new Map<string, OldItem[]>();
-    for (const item of source.items.filter((each) => each.type === "task").sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-      tasksOf.set(item.parent!, [...(tasksOf.get(item.parent!) ?? []), item]);
-    }
-    const subtaskIds = new Map<string, string>();
-    for (const [story, tasks] of tasksOf) {
-      const ids = tasks.map((task) => tracked("subtask", task.id)).filter((at): at is string => at?.startsWith(`${story}/`) ?? false);
-      let next = Math.max(0, ...ids.map((at) => Number(at.split("/s")[1])));
-      for (const task of tasks) {
-        const was = tracked("subtask", task.id);
-        subtaskIds.set(task.id, was?.startsWith(`${story}/`) ? was.split("/")[1]! : `s${++next}`);
+      const shared = nativeByName.get(tag.value.toLowerCase());
+      if (shared && shared !== tag.id) {
+        report.labelsShared.push({ tag: tag.value, label: shared });
+        labelId.set(tag.id, shared);
+        continue;
       }
+      upsert("labels", "label", { id: tag.id, name: tag.value, color: tag.color, description: tag.description, createdAt: tag.createdAt, updatedAt: tag.updatedAt }, report.labels);
+      labelId.set(tag.id, tag.id);
     }
 
-    const ours = source.items.filter((item) => item.type !== "task");
-    for (const item of ours) {
-      const children = tasksOf.get(item.id) ?? [];
-      const subtasks: Subtask[] = children.map((task) => {
-        const deps = task.dependsOn.map((id) => byId.get(id));
-        const siblings = deps.filter((dep): dep is OldItem => dep?.type === "task" && dep.parent === item.id);
+    // Each epic's stories are its subtasks, numbered in creation order and kept across runs.
+    const subtaskIds = new Map<string, string>();
+    for (const epic of top.filter((item) => item.type === "epic")) {
+      const stories = children(epic.id);
+      const was = (story: OldItem) => tracked("subtask", story.id)?.match(new RegExp(`^${epic.id}/(s\\d+)$`))?.[1];
+      let next = Math.max(0, ...stories.map((story) => Number(was(story)?.slice(1) ?? 0)));
+      for (const story of stories) subtaskIds.set(story.id, was(story) ?? `s${++next}`);
+    }
+
+    // Tasks: every epic, and every story or old task with nothing above it.
+    for (const item of top) {
+      const stories = item.type === "epic" ? children(item.id) : [];
+      const ticked: string[] = [];
+      const subtasks: Subtask[] = stories.map((story) => {
+        const deps = story.dependsOn.map((id) => byId.get(id));
+        const siblings = deps.filter((dep): dep is OldItem => dep !== undefined && dep.id !== story.id && subtaskIds.has(dep.id) && parentOf(dep) === item.id);
         const outside = deps.filter((dep): dep is OldItem => dep !== undefined && !siblings.includes(dep));
-        const missing = task.dependsOn.filter((id) => !byId.has(id));
+        const criteria = criteriaOf(story, detail(story.id).history);
+        if (tickedAtImport(story, criteria)) ticked.push(story.shortId);
         return {
-          id: subtaskIds.get(task.id)!,
-          title: task.title,
-          description: subtaskDescription(task, outside, missing),
-          status: statusOf(task),
+          id: subtaskIds.get(story.id)!,
+          title: story.title,
+          description: storyDescription(story, criteria, children(story.id), outside, story.dependsOn.filter((id) => !byId.has(id))),
+          status: statusOf(story),
           dependsOn: siblings.map((dep) => subtaskIds.get(dep.id)!),
         };
       });
-      const parentLabel = item.type === "epic" ? labelId.get(item.id) : item.parent ? labelId.get(item.parent) : undefined;
-      const labels = [...new Set([...item.tags.map((tag) => labelId.get(tag) ?? tag), ...(parentLabel ? [parentLabel] : [])])];
+      const ownTasks = item.type === "story" ? children(item.id) : [];
+      const tags = [...item.tags, ...stories.flatMap((story) => story.tags)];
       const task: Task = {
         id: item.id,
         title: item.title,
-        description: item.body,
+        description: ownTasks.length ? describe(item.body, taskList(ownTasks)) : item.body,
         status: statusOf(item),
-        dependsOn: item.dependsOn.filter((id) => byId.has(id) && byId.get(id)!.type !== "task"),
+        dependsOn: item.dependsOn.filter((id) => topIds.has(id) && id !== item.id),
         subtasks,
         criteria: criteriaOf(item, detail(item.id).history),
-        labels,
+        labels: [...new Set(tags.map((tag) => labelId.get(tag) ?? tag))],
         assignee: item.state === "open" ? item.heldBy : null,
         verification: null,
         createdAt: item.createdAt,
@@ -323,15 +374,23 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
       };
       if (!upsert("tasks", "task", task, report.tasks)) continue;
       report.subtasks += subtasks.length;
-      for (const task of children) track("subtask", task.id, `${item.id}/${subtaskIds.get(task.id)}`);
-      if (task.criteria.some((criterion) => criterion.metBy === IMPORT_ACTOR && !item.met.some((tick) => tick.criterion === criterion.text))) report.criteriaTickedAtImport.push(item.shortId);
+      for (const story of stories) track("subtask", story.id, `${item.id}/${subtaskIds.get(story.id)}`);
+      if (tickedAtImport(item, task.criteria)) report.criteriaTickedAtImport.push(item.shortId);
+      report.criteriaTickedAtImport.push(...ticked);
       if (task.status === "done" && task.criteria.some((criterion) => !criterion.met)) report.doneWithUnmetCriteria.push(item.shortId);
+      if (task.status === "done" && subtasks.some((sub) => sub.status !== "done" && sub.status !== "cancelled")) report.doneWithOpenSubtasks.push(item.shortId);
 
-      // History and comments: its own, then its old tasks', each marked with the subtask it was.
-      const sources = [{ item, mark: null as string | null }, ...children.map((child) => ({ item: child, mark: subtaskIds.get(child.id)! }))];
+      // History and comments: its own, then each story's and its tasks', marked with where they were.
+      const sources: { from: OldItem; mark: string | null; heading: string | null }[] = [{ from: item, mark: null, heading: null }];
+      for (const story of stories) {
+        const sub = subtaskIds.get(story.id)!;
+        sources.push({ from: story, mark: sub, heading: `On subtask ${sub} (story \`${story.shortId}\`)` });
+        for (const old of children(story.id)) sources.push({ from: old, mark: `${sub}.${old.shortId}`, heading: `On subtask ${sub} (story \`${story.shortId}\`, task \`${old.shortId}\`)` });
+      }
+      for (const old of ownTasks) sources.push({ from: old, mark: old.shortId, heading: `On task \`${old.shortId}\`` });
       const history: { key: string; entry: HistoryEntry }[] = [];
       const comments: Comment[] = [];
-      for (const { item: from, mark } of sources) {
+      for (const { from, mark, heading } of sources) {
         const filed = detail(from.id);
         for (const old of filed.history.filter((entry) => entry.item === from.id)) {
           const changes = [...old.changes, ...(old.overrode?.length ? [{ field: "overrode", from: null, to: old.overrode }] : [])];
@@ -342,7 +401,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
         }
         for (const old of [...filed.comments, ...filed.workLog]) {
           const body = withLinks(old);
-          comments.push({ id: old.id, taskId: item.id, author: old.author, body: mark ? `On subtask ${mark} (work-tracker task \`${from.shortId}\`):\n\n${body}` : body, createdAt: old.at });
+          comments.push({ id: old.id, taskId: item.id, author: old.author, body: heading ? `${heading}:\n\n${body}` : body, createdAt: old.at });
         }
       }
       for (const { key, entry } of history.sort((a, b) => a.entry.at.localeCompare(b.entry.at))) {
@@ -358,31 +417,84 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
       }
     }
 
-    // Short ids: each old one should still name its item, an old task's its story's subtask.
+    // Short ids: each old one should still name its item, and a story's or old task's none.
     const all = new Tasks((db.prepare("SELECT record FROM tasks").all() as { record: string }[]).map((row) => JSON.parse(row.record) as Task));
     const allIds = [...(db.prepare("SELECT id FROM tasks").all() as { id: string }[]).map((row) => row.id)];
     for (const item of source.items) {
-      const named = allIds.filter((id) => id.startsWith(item.shortId));
-      if (item.type === "task") {
-        if (named.length) report.clashes.push({ shortId: item.shortId, item: item.id, why: `an old task's short id, now ${subtaskIds.get(item.id)} of ${byId.get(item.parent!)?.shortId}, names task ${named.join(", ")} in waypoint` });
+      const named = allIds.filter((id) => id.startsWith(item.shortId) && id !== item.id);
+      if (!topIds.has(item.id)) {
+        if (tracked("task", item.id) !== undefined && stored("tasks", item.id) !== undefined) report.stale.push(item.shortId);
+        if (named.length) report.clashes.push({ shortId: item.shortId, item: item.id, why: `an old ${item.type}'s short id names task ${named.join(", ")} in waypoint` });
       } else if (!native.has(item.id) && all.get(item.id) && all.shortId(item.id) !== item.shortId) {
-        report.clashes.push({ shortId: item.shortId, item: item.id, why: `in waypoint its short id is ${all.shortId(item.id)}, shared with ${named.filter((id) => id !== item.id).join(", ")}` });
+        report.clashes.push({ shortId: item.shortId, item: item.id, why: `in waypoint its short id is ${all.shortId(item.id)}, shared with ${named.join(", ")}` });
       }
     }
 
-    const wrote =
-      report.tasks.created + report.tasks.updated + report.labels.created + report.labels.updated + report.added.comments + report.added.history;
-    if (dryRun) db.exec("ROLLBACK");
-    else {
-      if (wrote) bumpVersion(db);
-      db.exec("COMMIT");
-    }
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-  return report;
+    const wrote = report.tasks.created + report.tasks.updated + report.labels.created + report.labels.updated + report.added.comments + report.added.history;
+    return { result: report, wrote };
+  });
 }
+
+// --- removing an import ----------------------------------------------------
+
+export interface RemoveReport {
+  dryRun: boolean;
+  removed: { tasks: number; comments: number; history: number; labels: number };
+  /** Tasks with an old item's id that the import never wrote, so waypoint made them: left alone. */
+  leftAlone: string[];
+  /** Labels the import made that a task left standing still carries: kept, so it names no missing label. */
+  labelsKept: { id: string; name: string; tasks: string[] }[];
+}
+
+/**
+ * Deletes what an import of `source`, of this shape or the one before it,
+ * wrote: each task with an old item's id, its comments and history, and the
+ * labels made for tags and epics. Nothing waypoint made itself.
+ */
+export function removeWorkTrackerImport(db: DatabaseSync, source: Pick<Source, "items" | "tags">, { dryRun = false } = {}): RemoveReport {
+  db.exec(SCHEMA);
+  const report: RemoveReport = { dryRun, removed: { tasks: 0, comments: 0, history: 0, labels: 0 }, leftAlone: [], labelsKept: [] };
+  const tracked = (kind: string, key: string) => db.prepare("SELECT 1 FROM work_tracker_import WHERE kind = ? AND key = ?").get(kind, key) !== undefined;
+  const count = (sql: string, id: string) => (db.prepare(sql).get(id) as { n: number }).n;
+  return transaction(db, dryRun, () => {
+    const taskIds = new Set((db.prepare("SELECT id FROM tasks").all() as { id: string }[]).map((row) => row.id));
+    const doomed = new Set<string>();
+    for (const item of source.items) {
+      if (!taskIds.has(item.id)) continue;
+      if (tracked("task", item.id)) doomed.add(item.id);
+      else report.leftAlone.push(item.id);
+    }
+    for (const id of doomed) {
+      report.removed.comments += count("SELECT COUNT(*) AS n FROM comments WHERE task_id = ?", id);
+      report.removed.history += count("SELECT COUNT(*) AS n FROM task_history WHERE task_id = ?", id);
+      db.prepare("DELETE FROM comments WHERE task_id = ?").run(id);
+      db.prepare("DELETE FROM task_history WHERE task_id = ?").run(id);
+      db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+      db.prepare("DELETE FROM work_tracker_import WHERE (kind = 'task' AND key = ?) OR (kind = 'history' AND value = ?)").run(id, id);
+      report.removed.tasks++;
+    }
+    for (const item of source.items) db.prepare("DELETE FROM work_tracker_import WHERE kind = 'subtask' AND key = ?").run(item.id);
+
+    const left = (db.prepare("SELECT record FROM tasks").all() as { record: string }[]).map((row) => JSON.parse(row.record) as Task);
+    const ours = [...source.tags.map((tag) => tag.id), ...source.items.filter((item) => item.type === "epic").map((epic) => epicLabelId(epic.id))];
+    for (const id of ours) {
+      const row = db.prepare("SELECT record FROM labels WHERE id = ?").get(id) as { record: string } | undefined;
+      if (!row || !tracked("label", id)) continue;
+      const users = left.filter((task) => task.labels.includes(id)).map((task) => task.id);
+      if (users.length) {
+        report.labelsKept.push({ id, name: (JSON.parse(row.record) as Label).name, tasks: users });
+        continue;
+      }
+      db.prepare("DELETE FROM labels WHERE id = ?").run(id);
+      db.prepare("DELETE FROM work_tracker_import WHERE kind = 'label' AND key = ?").run(id);
+      report.removed.labels++;
+    }
+    const { tasks, comments, history, labels } = report.removed;
+    return { result: report, wrote: tasks + comments + history + labels };
+  });
+}
+
+// --- reports ---------------------------------------------------------------
 
 /** The report as lines for a person. */
 export function describeReport(report: Report): string {
@@ -393,12 +505,27 @@ export function describeReport(report: Report): string {
     `  tasks: ${report.tasks.created} created, ${report.tasks.updated} updated, ${report.tasks.unchanged} unchanged; ${report.subtasks} subtasks among them`,
     `  labels: ${report.labels.created} created, ${report.labels.updated} updated, ${report.labels.unchanged} unchanged`,
     `  added: ${report.added.comments} comments, ${report.added.history} history entries`,
+    `  stories with no epic: ${report.ownTasks.stories.length}; old tasks with no story: ${report.ownTasks.tasks.length} (each a task of its own)`,
   ];
   const list = (title: string, entries: string[]) => entries.length && lines.push(`${title} (${entries.length}):`, ...entries.map((each) => `  ${each}`));
+  const row = (title: string, entries: string[]) => entries.length && lines.push(`${title} (${entries.length}):`, `  ${entries.join(" ")}`);
+  row("Stories with no epic", report.ownTasks.stories);
+  row("Old tasks with no story", report.ownTasks.tasks);
+  row("Made tasks by an earlier import, still there: run --remove, then import", report.stale);
   list("Left alone", report.leftAlone.map((each) => `${each.id}: ${each.why}`));
   list("Short-id clashes, for the person", report.clashes.map((each) => `${each.shortId} (${each.item}): ${each.why}`));
   list("Tags given a label waypoint already had", report.labelsShared.map((each) => `${each.tag} -> ${each.label}`));
-  if (report.criteriaTickedAtImport.length) lines.push(`Done with criteria the tracker left unmet, ticked by the import (${report.criteriaTickedAtImport.length}):`, `  ${report.criteriaTickedAtImport.join(" ")}`);
-  if (report.doneWithUnmetCriteria.length) lines.push(`Done with criteria unmet (${report.doneWithUnmetCriteria.length}):`, `  ${report.doneWithUnmetCriteria.join(" ")}`);
+  row("Done with criteria the tracker left unmet, ticked by the import", report.criteriaTickedAtImport);
+  row("Done with criteria unmet", report.doneWithUnmetCriteria);
+  row("Done with a subtask still open", report.doneWithOpenSubtasks);
+  return `${lines.join("\n")}\n`;
+}
+
+/** The removal's report as lines for a person. */
+export function describeRemoval(report: RemoveReport): string {
+  const { tasks, comments, history, labels } = report.removed;
+  const lines = [`${report.dryRun ? "Would remove (dry run, nothing written)" : "Removed"} what the work-tracker import wrote:`, `  ${tasks} tasks, ${comments} comments, ${history} history entries, ${labels} labels`];
+  if (report.leftAlone.length) lines.push(`Left alone, made in waypoint with an old item's id (${report.leftAlone.length}):`, ...report.leftAlone.map((id) => `  ${id}`));
+  if (report.labelsKept.length) lines.push(`Labels kept, carried by a task left standing (${report.labelsKept.length}):`, ...report.labelsKept.map((each) => `  ${each.name} (${each.id}): ${each.tasks.join(", ")}`));
   return `${lines.join("\n")}\n`;
 }

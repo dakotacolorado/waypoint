@@ -22,7 +22,7 @@ It needs Node 24 or later.
 ██║███╗██║██╔══██║  ╚██╔╝  ██╔═══╝ ██║   ██║██║██║╚██╗██║   ██║         ▄▄▀▀▀▀  ▀███▀
 ╚███╔███╔╝██║  ██║   ██║   ██║     ╚██████╔╝██║██║ ╚████║   ██║     █▀█▀          ▀
  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝      ╚═════╝ ╚═╝╚═╝  ╚═══╝   ╚═╝     ▀▀▀
-v0.5.0
+v0.6.0
 
 Know where you're going, and each step that gets you there.
 A task tracker with dependency and status management.
