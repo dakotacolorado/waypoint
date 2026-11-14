@@ -29,6 +29,8 @@ export interface OldItem {
   dependsOn: string[];
   createdAt: string;
   updatedAt: string;
+  /** When it was closed, where the tracker gives it; else read from its history. */
+  closedAt?: string | null;
   heldBy: string | null;
   tags: string[];
 }
@@ -114,11 +116,30 @@ export function seededId(seed: string): string {
 
 const historyKey = (entry: OldHistoryEntry) => createHash("sha256").update(JSON.stringify([entry.item, entry.at, entry.action, entry.changes])).digest("hex");
 
-const criteriaOf = (item: OldItem): Criterion[] =>
-  item.acceptanceCriteria.map((text, i) => {
+/** Who ticks, at import, a criterion left unmet on an item imported as `done`. */
+export const IMPORT_ACTOR = "import";
+
+/** When `item` was closed: its `closedAt`, else its last own history entry closing it, else its `updatedAt`. */
+function closedAtOf(item: OldItem, history: OldHistoryEntry[]): string {
+  if (item.closedAt) return item.closedAt;
+  const closing = history.filter((entry) => entry.item === item.id && entry.changes.some((change) => change.field === "state" && change.to === "closed"));
+  return closing.map((entry) => entry.at).sort().at(-1) ?? item.updatedAt;
+}
+
+/**
+ * Its criteria with their ticks. An item imported as `done` has every one met,
+ * those left unmet ticked by the import at its close, as the person decided:
+ * waypoint refuses any update to a `done` task with a criterion unmet.
+ */
+const criteriaOf = (item: OldItem, history: OldHistoryEntry[]): Criterion[] => {
+  const closedAt = statusOf(item) === "done" ? closedAtOf(item, history) : null;
+  return item.acceptanceCriteria.map((text, i) => {
     const tick = item.met.find((each) => each.criterion === text);
-    return { id: `c${i + 1}`, text, met: Boolean(tick), metBy: tick?.by ?? null, metAt: tick?.at ?? null };
+    if (tick) return { id: `c${i + 1}`, text, met: true, metBy: tick.by ?? null, metAt: tick.at };
+    if (closedAt) return { id: `c${i + 1}`, text, met: true, metBy: IMPORT_ACTOR, metAt: closedAt };
+    return { id: `c${i + 1}`, text, met: false, metBy: null, metAt: null };
   });
+};
 
 /** An old task's body, then where it came from, its criteria and any dependency a subtask can't hold. */
 function subtaskDescription(task: OldItem, outside: OldItem[], missing: string[]): string {
@@ -152,7 +173,9 @@ export interface Report {
   clashes: { shortId: string; item: string; why: string }[];
   /** Old tags whose name a label made in waypoint already has: that label is used. */
   labelsShared: { tag: string; label: string }[];
-  /** Imported as `done` with criteria unmet, which waypoint refuses any update to until they are met or it moves. */
+  /** Imported as `done` with criteria the old tracker left unmet: the import ticked them, as met at its close. */
+  criteriaTickedAtImport: string[];
+  /** Imported as `done` with criteria unmet, which waypoint refuses any update to until they are met or it moves: none, since the import ticks them. */
   doneWithUnmetCriteria: string[];
 }
 
@@ -181,6 +204,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
     leftAlone: [],
     clashes: [],
     labelsShared: [],
+    criteriaTickedAtImport: [],
     doneWithUnmetCriteria: [],
   };
   for (const item of source.items) {
@@ -290,7 +314,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
         status: statusOf(item),
         dependsOn: item.dependsOn.filter((id) => byId.has(id) && byId.get(id)!.type !== "task"),
         subtasks,
-        criteria: criteriaOf(item),
+        criteria: criteriaOf(item, detail(item.id).history),
         labels,
         assignee: item.state === "open" ? item.heldBy : null,
         createdAt: item.createdAt,
@@ -299,6 +323,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
       if (!upsert("tasks", "task", task, report.tasks)) continue;
       report.subtasks += subtasks.length;
       for (const task of children) track("subtask", task.id, `${item.id}/${subtaskIds.get(task.id)}`);
+      if (task.criteria.some((criterion) => criterion.metBy === IMPORT_ACTOR && !item.met.some((tick) => tick.criterion === criterion.text))) report.criteriaTickedAtImport.push(item.shortId);
       if (task.status === "done" && task.criteria.some((criterion) => !criterion.met)) report.doneWithUnmetCriteria.push(item.shortId);
 
       // History and comments: its own, then its old tasks', each marked with the subtask it was.
@@ -372,6 +397,7 @@ export function describeReport(report: Report): string {
   list("Left alone", report.leftAlone.map((each) => `${each.id}: ${each.why}`));
   list("Short-id clashes, for the person", report.clashes.map((each) => `${each.shortId} (${each.item}): ${each.why}`));
   list("Tags given a label waypoint already had", report.labelsShared.map((each) => `${each.tag} -> ${each.label}`));
+  if (report.criteriaTickedAtImport.length) lines.push(`Done with criteria the tracker left unmet, ticked by the import (${report.criteriaTickedAtImport.length}):`, `  ${report.criteriaTickedAtImport.join(" ")}`);
   if (report.doneWithUnmetCriteria.length) lines.push(`Done with criteria unmet (${report.doneWithUnmetCriteria.length}):`, `  ${report.doneWithUnmetCriteria.join(" ")}`);
   return `${lines.join("\n")}\n`;
 }

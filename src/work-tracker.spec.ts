@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { FakeStore } from "./fake-store.ts";
 import { Store } from "./store.ts";
-import { epicLabelName, importWorkTracker, readWorkTracker, seededId, statusOf, type OldHistoryEntry, type OldItem, type Source } from "./work-tracker.ts";
+import { epicLabelName, IMPORT_ACTOR, importWorkTracker, readWorkTracker, seededId, statusOf, type OldHistoryEntry, type OldItem, type Source } from "./work-tracker.ts";
 
 const EPIC = "e1e1e1e1-0000-4000-8000-000000000001";
 const STORY = "51515151-0000-4000-8000-000000000002";
@@ -127,6 +127,42 @@ describe("importWorkTracker", () => {
     expect(tasks.get(EPIC)!.labels).toEqual([TAG, epicLabel.id]);
     expect(tasks.get(OTHER_EPIC)!.status).toBe("done");
     expect(tasks.get(OTHER_STORY)!.status).toBe("cancelled");
+  });
+
+  it("ticks, as met by the import when it was closed, each criterion left unmet on an item imported as done, and none on one still open", async () => {
+    const given = source();
+    const closedAt = "2026-11-05T00:00:00.000Z";
+    const done = (fields: Partial<OldItem> & Pick<OldItem, "id">) =>
+      item({ type: "story", title: "Finished", parent: OTHER_EPIC, state: "closed", closedReason: "completed", status: "done", acceptanceCriteria: ["shipped", "documented"], met: [{ criterion: "shipped", by: "approval-service", at: "2026-11-04T00:00:00.000Z" }], updatedAt: "2026-11-06T00:00:00.000Z", ...fields });
+    const fromHistory = done({ id: "d1d1d1d1-0000-4000-8000-000000000011" });
+    const fromField = done({ id: "d2d2d2d2-0000-4000-8000-000000000012", closedAt: "2026-11-05T12:00:00.000Z" });
+    const unknown = done({ id: "d3d3d3d3-0000-4000-8000-000000000013" });
+    given.items.push(fromHistory, fromField, unknown);
+    given.detail[fromHistory.id] = { history: [created(fromHistory), { item: fromHistory.id, action: "updated", changes: [{ field: "state", from: "open", to: "closed" }], at: closedAt, claimedBy: null, overrode: [] }], comments: [], workLog: [] };
+    const store = fresh();
+    const report = importWorkTracker(store.db, given);
+    expect(report.doneWithUnmetCriteria).toEqual([]);
+    expect(report.criteriaTickedAtImport.sort()).toEqual(["d1d1d1d1", "d2d2d2d2", "d3d3d3d3"]);
+
+    const tasks = await store.tasks();
+    const criteria = (id: string) => tasks.get(id)!.criteria;
+    expect(criteria(fromHistory.id)).toEqual([
+      { id: "c1", text: "shipped", met: true, metBy: "approval-service", metAt: "2026-11-04T00:00:00.000Z" },
+      { id: "c2", text: "documented", met: true, metBy: IMPORT_ACTOR, metAt: closedAt },
+    ]);
+    expect(criteria(fromField.id)[1]).toMatchObject({ met: true, metBy: "import", metAt: "2026-11-05T12:00:00.000Z" });
+    expect(criteria(unknown.id)[1]).toMatchObject({ met: true, metBy: "import", metAt: "2026-11-06T00:00:00.000Z" });
+    // Open, its unmet criterion stays unmet.
+    expect(criteria(STORY)[1]).toEqual({ id: "c2", text: "documented", met: false, metBy: null, metAt: null });
+
+    // Editable, as any done task with its criteria met is.
+    await store.updateTask(fromHistory.id, { title: "Finished, renamed" }, "person");
+    expect((await store.tasks()).get(fromHistory.id)!.title).toBe("Finished, renamed");
+
+    // And a second run changes nothing.
+    const again = importWorkTracker(store.db, given);
+    expect(again.tasks.created + again.tasks.updated).toBe(0);
+    expect(again.added).toEqual({ comments: 0, history: 0 });
   });
 
   it("keeps each item's own history with its writers and times, an old task's on its story marked with its subtask, and comments with the work log and links", async () => {
