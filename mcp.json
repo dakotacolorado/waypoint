@@ -32,7 +32,16 @@
             "description": "Only tasks assigned to this; none for unassigned tasks.",
             "type": "string"
           },
+          "dependsOn": {
+            "description": "Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Only tasks whose title or description contains this text, ignoring case.",
+            "type": "string"
+          },
           "includeCancelled": {
+            "description": "true to include cancelled tasks.",
             "type": "boolean"
           },
           "maxResults": {

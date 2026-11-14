@@ -56,6 +56,7 @@ The page shows the board by status, which tasks are ready and which are blocked,
 - A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
 - `ListTasks` leaves cancelled tasks out unless `includeCancelled` is `true` (or `status` is `cancelled`); the page's **Show cancelled** does the same.
+- `ListTasks` takes `dependsOn` (the tasks that depend on a task) and `q` (text in a title or description, ignoring case), with its other filters.
 - **Labels** group tasks. **Comments** sit beside a task without changing it, and its **history** records every write.
 
 ## The API

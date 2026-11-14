@@ -183,6 +183,21 @@ describe("ListTasks", () => {
     expect([blocked.id, gone.id]).toHaveLength(2);
   });
 
+  it("finds the tasks that depend on a task, and those whose title or description holds some text, with the other filters", async () => {
+    const base = await create({ title: "Base", description: "Lays the ground." });
+    await create({ title: "Roof", description: "Goes on the GROUND floor walls.", dependsOn: [base.id] });
+    await create({ title: "Garden", dependsOn: [base.id], status: "cancelled" });
+    await create({ title: "Ground survey" });
+    const titles = async (query: string) => ((await call("GET", `/tasks${query}`)).body!.tasks as TaskView[]).map((task) => task.title);
+    expect(await titles(`?dependsOn=${base.id}`)).toEqual(["Roof"]);
+    expect(await titles(`?dependsOn=${base.shortId}&includeCancelled=true`)).toEqual(["Roof", "Garden"]);
+    expect(await titles("?dependsOn=00000000-0000-0000-0000-000000000000")).toEqual([]);
+    expect(await titles("?q=ground")).toEqual(["Base", "Roof", "Ground survey"]);
+    expect(await titles(`?q=ground&dependsOn=${base.id}`)).toEqual(["Roof"]);
+    expect(await titles("?q=ground&ready=false")).toEqual(["Roof"]);
+    expect(await titles("?q=nowhere")).toEqual([]);
+  });
+
   it("pages with maxResults and nextToken, and refuses a token it didn't give", async () => {
     for (const title of ["a", "b", "c"]) await create({ title });
     const first = await call("GET", "/tasks?maxResults=2");
