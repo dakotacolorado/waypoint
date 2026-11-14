@@ -148,8 +148,8 @@ describe("criteria", () => {
 describe("short ids", () => {
   it("find a task by any prefix of 8 or more, and refuse one that matches two", () => {
     const tasks = new Tasks([
-      { id: "abcdef01-0000-4000-8000-000000000001", title: "A", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, createdAt: NOW, updatedAt: NOW },
-      { id: "abcdef01-9999-4000-8000-000000000002", title: "B", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, createdAt: NOW, updatedAt: NOW },
+      { id: "abcdef01-0000-4000-8000-000000000001", title: "A", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, verification: null, createdAt: NOW, updatedAt: NOW },
+      { id: "abcdef01-9999-4000-8000-000000000002", title: "B", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, verification: null, createdAt: NOW, updatedAt: NOW },
     ]);
     expect(tasks.shortId("abcdef01-0000-4000-8000-000000000001")).toBe("abcdef01-0");
     expect(tasks.find("abcdef01-9").title).toBe("B");

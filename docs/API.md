@@ -1,4 +1,4 @@
-# waypoint API, version 2026-11-12
+# waypoint API, version 2026-11-14
 
 A task tracker with dependency and status management. A task depends on other tasks, and the service keeps it from being started while it is blocked by one still open, or finished before its acceptance criteria are met.
 
@@ -6,11 +6,12 @@ A task tracker with dependency and status management. A task depends on other ta
 - A task **depends on** other tasks, and is **ready** when it is in `backlog` and every task it depends on is closed.
 - A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
+- A task's **verification** says who checks that its work does what it should, `agent` or `person`, and when, `before_release` or `after_release`; null if no one has said.
 - Cancelled tasks count as closed, and `ListTasks` leaves them out unless `includeCancelled` is `true` or `status` is `cancelled`.
 
 Every request takes `Authorization: Bearer <token>` but these, which hold no data: `GetHealth` (`/health`), the contracts (`/openapi.json`, `/mcp.json`), the docs (`/docs/api`, `/docs/mcp`) and the page (`/`, `/ui/…`). A write is recorded as its `x-actor` header, else its token's name; one by the environment's admin token (`WAYPOINT_ADMIN_TOKEN`), which has no name, as null.
 
-The API's version, 2026-11-12, is the date its contract last changed, as AWS dates theirs; the package's version is apart, and `GetHealth` gives it. Errors are `{code, message}`.
+The API's version, 2026-11-14, is the date its contract last changed, as AWS dates theirs; the package's version is apart, and `GetHealth` gives it. Errors are `{code, message}`.
 
 ## Operations
 
@@ -124,6 +125,10 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "verification": {
+         "by": "agent | person",
+         "when": "before_release | after_release"
+      },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -190,6 +195,10 @@ Content-type: application/json
    } ],
    "labels": [ "string" ],
    "assignee": "string",
+   "verification": {
+      "by": "agent | person",
+      "when": "before_release | after_release"
+   },
    "clientToken": "string"
 }
 ```
@@ -234,6 +243,10 @@ Type: Array of strings. At most 20 items. Required: No.
 Who the task is assigned to; null for no one.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
+**verification**  
+Who checks the task's work and when; null to say nothing of it.  
+Type: Object. Nullable: Yes. Required: No.
+
 **clientToken**  
 A unique string you choose. Retrying a request with the same token returns what the first created, instead of creating another.  
 Type: String. Length: 1 to 64. Required: No.
@@ -269,6 +282,10 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "verification": {
+         "by": "agent | person",
+         "when": "before_release | after_release"
+      },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -350,6 +367,10 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "verification": {
+         "by": "agent | person",
+         "when": "before_release | after_release"
+      },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -409,7 +430,11 @@ Content-type: application/json
       "met": boolean
    } ],
    "labels": [ "string" ],
-   "assignee": "string"
+   "assignee": "string",
+   "verification": {
+      "by": "agent | person",
+      "when": "before_release | after_release"
+   }
 }
 ```
 
@@ -459,6 +484,10 @@ Type: Array of strings. At most 20 items. Required: No.
 Who the task is assigned to; null for no one.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
+**verification**  
+Who checks the task's work and when; null to say nothing of it.  
+Type: Object. Nullable: Yes. Required: No.
+
 ### Response syntax
 
 ```http
@@ -490,6 +519,10 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "verification": {
+         "by": "agent | person",
+         "when": "before_release | after_release"
+      },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -1195,6 +1228,10 @@ Type: Array of strings. Required: Yes.
 **assignee**  
 Who the task is assigned to, as free text; null if no one.  
 Type: String. Nullable: Yes. Required: Yes.
+
+**verification**  
+Who checks the task's work and when; null if no one has said.  
+Type: Object. Nullable: Yes. Required: Yes.
 
 **createdAt**  
 When, as an ISO 8601 date and time in UTC.  

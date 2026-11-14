@@ -523,6 +523,16 @@ function taskPicker({ candidates, label: name, onPick }) {
 }
 
 /** The field a write from the task page just saved, said once on the redraw that follows it. */
+/** Who checks a task's work and when, as the task page's choices: `by:when`, or empty for not said. */
+const VERIFICATIONS = [
+  ["", "Not said"],
+  ["agent:before_release", "An agent, before release"],
+  ["agent:after_release", "An agent, after release"],
+  ["person:before_release", "The person, before release"],
+  ["person:after_release", "The person, after release"],
+];
+const verificationValue = (verification) => (verification ? `${verification.by}:${verification.when}` : "");
+
 let justSaved = null;
 
 async function taskPage(ref) {
@@ -612,6 +622,29 @@ async function taskPage(ref) {
           ),
       }),
       saved === "assignee" && h("span", { class: "saved", role: "status" }, "Saved"),
+    ),
+    h(
+      "div",
+      { class: "row" },
+      h("span", { class: "muted", id: "verification-label" }, "Verified by"),
+      h(
+        "select",
+        {
+          "aria-labelledby": "verification-label",
+          onchange: (e) =>
+            act(
+              box,
+              async () => {
+                const [by, when] = e.target.value.split(":");
+                await api("PATCH", `/tasks/${task.id}`, { verification: by ? { by, when } : null });
+                justSaved = "verification";
+              },
+              { undo: () => (e.target.value = verificationValue(task.verification)), explain },
+            ),
+        },
+        VERIFICATIONS.map(([value, text]) => h("option", { value, selected: value === verificationValue(task.verification) }, text)),
+      ),
+      saved === "verification" && h("span", { class: "saved", role: "status" }, "Saved"),
     ),
     h(
       "div",
