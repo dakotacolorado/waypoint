@@ -10,7 +10,7 @@ import { PACKAGE_VERSION } from "./build.ts";
 import { OPEN_WORDS } from "./contract.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
-import { describeReport, importWorkTracker, readWorkTracker, type Source } from "./work-tracker.ts";
+import { describeRemoval, describeReport, importWorkTracker, readWorkTracker, removeWorkTrackerImport, type Source } from "./work-tracker.ts";
 
 const USAGE = `waypoint v${PACKAGE_VERSION}
 ${TAGLINE}
@@ -22,10 +22,11 @@ Usage:
   waypoint token list
   waypoint token revoke <name>
   waypoint backup <file>                  copy the database, consistent while the server runs, to <file>
-  waypoint import work-tracker [--from <url> | --source <file>] [--save <file>] [--dry-run]
+  waypoint import work-tracker [--from <url> | --source <file>] [--save <file>] [--remove] [--dry-run]
                                           copy work-tracker-service's items into the database, keeping
                                           their ids, short ids, timestamps and authors; safe to run again.
-                                          --save keeps what was read, which --source imports again
+                                          --save keeps what was read, which --source imports again;
+                                          --remove deletes what an import of those items wrote instead
 
 Options:
   --host <addr>     address to listen on (default 127.0.0.1, or WAYPOINT_HOST)
@@ -54,6 +55,7 @@ const { values, positionals } = parseArgs({
     admin: { type: "boolean" },
     from: { type: "string" },
     "dry-run": { type: "boolean" },
+    remove: { type: "boolean" },
     source: { type: "string" },
     save: { type: "string" },
     help: { type: "boolean", short: "h" },
@@ -121,7 +123,8 @@ if (command === "import") {
   try {
     const source: Source = values.source ? JSON.parse(readFileSync(values.source, "utf8")) : await readWorkTracker(from!, token!);
     if (values.save) writeFileSync(values.save, JSON.stringify(source));
-    process.stdout.write(describeReport(importWorkTracker(store.db, source, { dryRun: values["dry-run"] === true })));
+    const dryRun = values["dry-run"] === true;
+    process.stdout.write(values.remove ? describeRemoval(removeWorkTrackerImport(store.db, source, { dryRun })) : describeReport(importWorkTracker(store.db, source, { dryRun })));
   } catch (err) {
     fail(`import failed: ${(err as Error).message}`);
   }
