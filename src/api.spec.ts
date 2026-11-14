@@ -137,6 +137,24 @@ describe("tasks", () => {
     expect(await refused("GET", "/tasks?maxResults=0", undefined)).toBe("maxResults must be at least 1");
   });
 
+  it("sets who verifies a task and when on create and update, clears it with null, and refuses any other value", async () => {
+    expect((await create({ title: "unsaid" })).verification).toBeNull();
+    const task = await create({ title: "checked", verification: { by: "person", when: "before_release" } });
+    expect(task.verification).toEqual({ by: "person", when: "before_release" });
+    expect((await update(task.id, { verification: { by: "agent", when: "after_release" } })).body!.task).toMatchObject({ verification: { by: "agent", when: "after_release" } });
+    expect((await update(task.id, { title: "renamed" })).body!.task).toMatchObject({ verification: { by: "agent", when: "after_release" } });
+    expect((await update(task.id, { verification: null })).body!.task).toMatchObject({ verification: null });
+    for (const verification of [{ by: "robot", when: "before_release" }, { by: "person" }, { by: "person", when: "after_release", extra: 1 }]) {
+      expect((await update(task.id, { verification })).status, JSON.stringify(verification)).toBe(400);
+    }
+    const history = (await call("GET", `/tasks/${task.id}/history`)).body!.entries as HistoryEntry[];
+    expect(history.flatMap((entry) => entry.changes.filter((change) => change.field === "verification").map((change) => change.to))).toEqual([
+      { by: "person", when: "before_release" },
+      { by: "agent", when: "after_release" },
+      null,
+    ]);
+  });
+
   it("returns what the first create made when its clientToken is sent again", async () => {
     const first = await create({ title: "once", clientToken: "abc" });
     const again = await create({ title: "once", clientToken: "abc" });

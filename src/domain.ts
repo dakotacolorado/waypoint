@@ -8,6 +8,16 @@ export const CLOSED: readonly Status[] = ["done", "cancelled"];
 /** Moving into one of these needs everything it depends on closed. */
 export const STARTED: readonly Status[] = ["in_progress", "review", "done"];
 
+/** Who checks that a task's work does what it should: an agent, or the person. */
+export const VERIFIERS = ["agent", "person"] as const;
+/** When they check it: before the work is released to its users, or after. */
+export const VERIFY_WHEN = ["before_release", "after_release"] as const;
+
+export interface Verification {
+  by: (typeof VERIFIERS)[number];
+  when: (typeof VERIFY_WHEN)[number];
+}
+
 export const SHORT_ID_LENGTH = 8;
 export const MAX_LABELS = 20;
 export const MAX_CRITERIA = 50;
@@ -39,6 +49,7 @@ export interface Task {
   criteria: Criterion[];
   labels: string[];
   assignee: string | null;
+  verification: Verification | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +90,7 @@ export interface TaskInput {
   criteria?: CriterionInput[];
   labels?: string[];
   assignee?: string | null;
+  verification?: Verification | null;
 }
 
 /** The request is wrong: 400. */
@@ -109,7 +121,7 @@ export interface HistoryEntry {
   at: string;
 }
 
-const RECORDED = ["title", "description", "status", "dependsOn", "subtasks", "criteria", "labels", "assignee"] as const;
+const RECORDED = ["title", "description", "status", "dependsOn", "subtasks", "criteria", "labels", "assignee", "verification"] as const;
 
 /** The recorded fields that differ; a missing side reads as null throughout. */
 export function changes(before: Task | null, after: Task | null): Change[] {
@@ -264,7 +276,7 @@ export class Tasks {
 
   /** `input` applied to `current`, or a new task when there is none. */
   apply(current: Task | null, input: TaskInput, actor: string | null, now: string, id = current?.id ?? this.freshId()): Task {
-    const base: Task = current ?? { id, title: "", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, createdAt: now, updatedAt: now };
+    const base: Task = current ?? { id, title: "", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, verification: null, createdAt: now, updatedAt: now };
     const next: Task = {
       ...base,
       ...(input.title !== undefined && { title: input.title }),
@@ -273,6 +285,7 @@ export class Tasks {
       ...(input.dependsOn !== undefined && { dependsOn: input.dependsOn }),
       ...(input.labels !== undefined && { labels: input.labels }),
       ...(input.assignee !== undefined && { assignee: input.assignee }),
+      ...(input.verification !== undefined && { verification: input.verification }),
       ...(input.criteria !== undefined && { criteria: criteriaFrom(input.criteria, base.criteria, actor, now) }),
       ...(input.subtasks !== undefined && { subtasks: subtasksFrom(input.subtasks, base.subtasks) }),
       updatedAt: now,

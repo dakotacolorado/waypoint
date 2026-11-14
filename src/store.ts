@@ -15,6 +15,15 @@ CREATE INDEX IF NOT EXISTS comments_task ON comments (task_id, seq);
 CREATE TABLE IF NOT EXISTS client_tokens (operation TEXT NOT NULL, token TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY (operation, token));
 `;
 
+/**
+ * Each changes stored records to the shape the code now reads, once, in
+ * order: the count applied is the meta key `migrations`. Append only.
+ */
+const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
+  // Tasks gain `verification`.
+  (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.verification', json('null')) WHERE json_type(record, '$.verification') IS NULL"),
+];
+
 export interface Comment {
   id: string;
   taskId: string;
@@ -63,6 +72,21 @@ export class Store {
     this.db = db;
     db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     db.exec(SCHEMA);
+    Store.migrate(db);
+  }
+
+  private static migrate(db: DatabaseSync): void {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = db.prepare("SELECT value FROM meta WHERE key = 'migrations'").get() as { value: string } | undefined;
+      const applied = row ? Number(row.value) : 0;
+      for (const migration of MIGRATIONS.slice(applied)) migration(db);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('migrations', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(String(MIGRATIONS.length));
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** The database at `path`, made if absent; `:memory:` for one that lasts as long as the process. */

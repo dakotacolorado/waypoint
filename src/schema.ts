@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { MAX_CRITERIA, MAX_LABELS, MAX_SUBTASKS, STATUSES } from "./domain.ts";
+import { MAX_CRITERIA, MAX_LABELS, MAX_SUBTASKS, STATUSES, VERIFIERS, VERIFY_WHEN } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -74,6 +74,13 @@ export const CriterionSchema = z
   })
   .openapi("Criterion");
 
+const VerificationSchema = z
+  .object({
+    by: z.enum(VERIFIERS).describe("Who checks the work does what it should: `agent`, the one doing the work, or `person`, the person it is for."),
+    when: z.enum(VERIFY_WHEN).describe("When they check it: `before_release`, before the work reaches its users, or `after_release`, once it has."),
+  })
+  .strict();
+
 export const SubtaskSchema = z
   .object({
     id: z.string().describe("The subtask's ID within its task: `s1`, `s2`, and so on. Kept for as long as the subtask is."),
@@ -97,6 +104,7 @@ export const TaskSchema = z
     criteria: z.array(CriterionSchema).describe("The acceptance criteria, in order. The task can't be `done` until each is met."),
     labels: z.array(z.string()).describe("The IDs of its labels."),
     assignee: z.string().nullable().describe("Who the task is assigned to, as free text; null if no one."),
+    verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null if no one has said."),
     createdAt: Timestamp,
     updatedAt: Timestamp,
     blockedBy: z.array(z.string()).describe("The tasks in `dependsOn` that aren't closed yet."),
@@ -139,6 +147,7 @@ const TaskFields = {
     .describe("The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed."),
   labels: z.array(z.string()).max(MAX_LABELS).describe("Labels, each by ID or name."),
   assignee: z.string().trim().min(1).max(200).nullable().describe("Who the task is assigned to; null for no one."),
+  verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null to say nothing of it."),
 };
 
 export const CreateTaskInput = z

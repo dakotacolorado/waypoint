@@ -3,7 +3,7 @@ import { SUMMARY } from "./banner.ts";
 import { ROUTES } from "./schema.ts";
 
 /** The API's version, dated as AWS dates theirs: changed only when the contract is. */
-export const API_VERSION = "2026-11-12";
+export const API_VERSION = "2026-11-14";
 
 /** Every path served without a token, as `OPEN_WORDS` names them; `/ui/` is a prefix. */
 export const OPEN_PATHS = ["/health", "/openapi.json", "/mcp.json", "/docs/api", "/docs/mcp", "/", "/ui/"] as const;
@@ -17,6 +17,7 @@ export const OVERVIEW = `${SUMMARY} A task depends on other tasks, and the servi
 - A task **depends on** other tasks, and is **ready** when it is in \`backlog\` and every task it depends on is closed.
 - A task can move to \`in_progress\`, \`review\` or \`done\` once every task it depends on is closed, and to \`done\` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
+- A task's **verification** says who checks that its work does what it should, \`agent\` or \`person\`, and when, \`before_release\` or \`after_release\`; null if no one has said.
 - Cancelled tasks count as closed, and \`ListTasks\` leaves them out unless \`includeCancelled\` is \`true\` or \`status\` is \`cancelled\`.
 
 ${OPEN_WORDS} A write is recorded as its \`x-actor\` header, else its token's name; one by the environment's admin token (\`WAYPOINT_ADMIN_TOKEN\`), which has no name, as null.

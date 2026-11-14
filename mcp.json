@@ -191,6 +191,40 @@
             ],
             "description": "Who the task is assigned to; null for no one."
           },
+          "verification": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "agent",
+                      "person"
+                    ],
+                    "description": "Who checks the work does what it should: `agent`, the one doing the work, or `person`, the person it is for."
+                  },
+                  "when": {
+                    "type": "string",
+                    "enum": [
+                      "before_release",
+                      "after_release"
+                    ],
+                    "description": "When they check it: `before_release`, before the work reaches its users, or `after_release`, once it has."
+                  }
+                },
+                "required": [
+                  "by",
+                  "when"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who checks the task's work and when; null to say nothing of it."
+          },
           "clientToken": {
             "description": "A unique string; retrying with it returns what the first request created.",
             "type": "string",
@@ -367,6 +401,40 @@
               }
             ],
             "description": "Who the task is assigned to; null for no one."
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "agent",
+                      "person"
+                    ],
+                    "description": "Who checks the work does what it should: `agent`, the one doing the work, or `person`, the person it is for."
+                  },
+                  "when": {
+                    "type": "string",
+                    "enum": [
+                      "before_release",
+                      "after_release"
+                    ],
+                    "description": "When they check it: `before_release`, before the work reaches its users, or `after_release`, once it has."
+                  }
+                },
+                "required": [
+                  "by",
+                  "when"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who checks the task's work and when; null to say nothing of it."
           }
         },
         "required": [

@@ -317,6 +317,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
         criteria: criteriaOf(item, detail(item.id).history),
         labels,
         assignee: item.state === "open" ? item.heldBy : null,
+        verification: null,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       };

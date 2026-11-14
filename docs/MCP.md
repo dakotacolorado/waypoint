@@ -80,6 +80,7 @@ Creates a task in backlog, unless status says otherwise.
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+| `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
 | `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
 
 ### get_task
@@ -105,6 +106,7 @@ Changes the fields given. Cancelling a task cancels its open subtasks.
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+| `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
 
 ### delete_task
 

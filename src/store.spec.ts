@@ -29,6 +29,24 @@ describe("Store on a file", () => {
     second.db.close();
   });
 
+  it("gives tasks stored before verification existed a null one, once", async () => {
+    const path = join(dir, "old.db");
+    const old = Store.open(path);
+    const task = await old.createTask({ title: "old", verification: { by: "person", when: "after_release" } }, null);
+    const { verification: _, ...before } = (await old.tasks()).get(task.id)!;
+    old.db.prepare("UPDATE tasks SET record = ? WHERE id = ?").run(JSON.stringify(before), task.id);
+    old.db.prepare("DELETE FROM meta WHERE key = 'migrations'").run();
+    old.db.close();
+
+    const migrated = Store.open(path);
+    expect((await migrated.tasks()).get(task.id)!.verification).toBeNull();
+    await migrated.updateTask(task.id, { verification: { by: "agent", when: "before_release" } }, null);
+    migrated.db.close();
+    const again = Store.open(path);
+    expect((await again.tasks()).get(task.id)!.verification).toEqual({ by: "agent", when: "before_release" });
+    again.db.close();
+  });
+
   it("backs up to a file another store opens with the same tasks, never leaving a partial copy", async () => {
     const live = Store.open(join(dir, "live.db"));
     const task = await live.createTask({ title: "in the copy" }, null);
