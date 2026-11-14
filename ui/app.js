@@ -7,6 +7,17 @@ const OPEN = STATUSES.filter((status) => status !== "cancelled");
 const CLOSED = ["done", "cancelled"];
 const TOKEN_KEY = "waypoint.token";
 
+// Signed in from the workplace UI: a link whose address ends #signin=<token> (after any route,
+// as #/x&signin=<token>) stores the token, as signing in here would, and drops it from the address.
+{
+  const given = /(?:^#|&)signin=([^&]+)/.exec(location.hash);
+  if (given) {
+    localStorage.setItem(TOKEN_KEY, decodeURIComponent(given[1]));
+    const rest = location.hash.replace(/(?:^#|&)signin=[^&]+/, "").replace(/^#?&/, "#");
+    history.replaceState(null, "", location.pathname + location.search + (rest.length > 1 ? rest : ""));
+  }
+}
+
 const main = document.getElementById("main");
 const signout = document.getElementById("signout");
 
