@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { serve } from "@hono/node-server";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -10,6 +10,7 @@ import { PACKAGE_VERSION } from "./build.ts";
 import { OPEN_WORDS } from "./contract.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
+import { describeReport, importWorkTracker, readWorkTracker, type Source } from "./work-tracker.ts";
 
 const USAGE = `waypoint v${PACKAGE_VERSION}
 ${TAGLINE}
@@ -21,6 +22,10 @@ Usage:
   waypoint token list
   waypoint token revoke <name>
   waypoint backup <file>                  copy the database, consistent while the server runs, to <file>
+  waypoint import work-tracker [--from <url> | --source <file>] [--save <file>] [--dry-run]
+                                          copy work-tracker-service's items into the database, keeping
+                                          their ids, short ids, timestamps and authors; safe to run again.
+                                          --save keeps what was read, which --source imports again
 
 Options:
   --host <addr>     address to listen on (default 127.0.0.1, or WAYPOINT_HOST)
@@ -32,6 +37,8 @@ Options:
 
 Environment:
   WAYPOINT_ADMIN_TOKEN       an admin token accepted beside the stored ones, never stored
+  WORK_TRACKER_URL           work-tracker-service's address, for import (or --from)
+  WORK_TRACKER_TOKEN         its bearer token, for import; read with GET requests only
 
 ${OPEN_WORDS.replaceAll("`", "")}
 With no admin token at all, serve makes one, named admin, and prints it once.
@@ -45,6 +52,10 @@ const { values, positionals } = parseArgs({
     db: { type: "string" },
     "public-url": { type: "string" },
     admin: { type: "boolean" },
+    from: { type: "string" },
+    "dry-run": { type: "boolean" },
+    source: { type: "string" },
+    save: { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -95,6 +106,24 @@ if (command === "backup") {
     process.stdout.write(`backed up ${path} to ${resolve(sub!)} (${pages} pages)\n`);
   } catch (err) {
     fail(`backup failed: ${(err as Error).message}`);
+  }
+  store.db.close();
+  process.exit(0);
+}
+
+if (command === "import") {
+  if (sub !== "work-tracker") fail(`unknown import "${sub ?? ""}": work-tracker`);
+  const from = values.from ?? env.WORK_TRACKER_URL;
+  const token = env.WORK_TRACKER_TOKEN;
+  if (!values.source && !from) fail("import work-tracker needs --source, or --from or WORK_TRACKER_URL");
+  if (!values.source && !token) fail("import work-tracker needs WORK_TRACKER_TOKEN");
+  const store = Store.open(path);
+  try {
+    const source: Source = values.source ? JSON.parse(readFileSync(values.source, "utf8")) : await readWorkTracker(from!, token!);
+    if (values.save) writeFileSync(values.save, JSON.stringify(source));
+    process.stdout.write(describeReport(importWorkTracker(store.db, source, { dryRun: values["dry-run"] === true })));
+  } catch (err) {
+    fail(`import failed: ${(err as Error).message}`);
   }
   store.db.close();
   process.exit(0);
