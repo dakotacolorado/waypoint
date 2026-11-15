@@ -27,18 +27,15 @@ v0.6.0
 Know where you're going, and each step that gets you there.
 A task tracker with dependency and status management.
 
-  ▸ Page      http://127.0.0.1:4400/
-  ▸ API       http://127.0.0.1:4400/tasks   docs http://127.0.0.1:4400/docs/api
-  ▸ MCP       http://127.0.0.1:4400/mcp     docs http://127.0.0.1:4400/docs/mcp
+  ▸ Page      https://waypoint.example.com/
+  ▸ API       https://waypoint.example.com/tasks   docs https://waypoint.example.com/docs/api
+  ▸ MCP       https://waypoint.example.com/mcp     docs https://waypoint.example.com/docs/mcp
 
 admin token (shown once, kept only as a hash): wp_…
-
-  listening on http://127.0.0.1:4400, data in ~/.waypoint/waypoint.db
-  Ctrl+C to stop.
 ```
 
 1. Keep the admin token it prints: it is shown once.
-2. Open http://127.0.0.1:4400/ and paste the token to sign in.
+2. Open the page it prints and paste the token to sign in.
 3. Create a task with **New task**, or through the API or MCP.
 
 ![The board](./docs/images/board.png)
@@ -75,21 +72,21 @@ A write is recorded under its `x-actor` header, else its token's name.
 - MCP tools: [`docs/MCP.md`](./docs/MCP.md), served at `/docs/mcp`; server at
   `/mcp`.
 
-Create a task, then list the ready ones:
+Create a task, then list the ready ones, with `WAYPOINT_URL` set to its address:
 
 ```sh
-curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' http://127.0.0.1:4400/tasks -d '{
+curl -s -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' "$WAYPOINT_URL/tasks" -d '{
   "title": "Write the README",
   "criteria": [{ "text": "Says how to run it" }],
   "subtasks": [{ "title": "Draft it" }, { "title": "Review it", "dependsOn": ["s1"] }]
 }'
-curl -s -H "authorization: Bearer $TOKEN" 'http://127.0.0.1:4400/tasks?ready=true'
+curl -s -H "authorization: Bearer $TOKEN" "$WAYPOINT_URL/tasks?ready=true"
 ```
 
 Add the MCP server to Claude Code:
 
 ```sh
-claude mcp add --transport http waypoint http://127.0.0.1:4400/mcp --header "Authorization: Bearer wp_…"
+claude mcp add --transport http waypoint "$WAYPOINT_URL/mcp" --header "Authorization: Bearer wp_…"
 ```
 
 `waypoint import work-tracker` copies a work-tracker-service's items into
