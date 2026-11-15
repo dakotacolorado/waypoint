@@ -29,7 +29,7 @@ What the server tells an agent when it connects:
 > - status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.
 > - A task depends on the tasks in its dependsOn, and is blocked by those still open (blockedBy). It is ready when it is in backlog and every task it depends on is closed.
 > - A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.
-> - In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.
+> - In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only. metadata is replaced whole.
 > - A task ID may be given as its shortId.
 
 ## Tools
@@ -81,6 +81,7 @@ Creates a task in backlog, unless status says otherwise.
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
 | `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
+| `metadata` | object |  | Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it. |
 | `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
 
 ### get_task
@@ -107,6 +108,7 @@ Changes the fields given. Cancelling a task cancels its open subtasks.
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
 | `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
+| `metadata` | object |  | Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it. |
 
 ### delete_task
 

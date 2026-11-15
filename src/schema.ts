@@ -81,6 +81,20 @@ const VerificationSchema = z
   })
   .strict();
 
+/** The most bytes a task's metadata may take as JSON. */
+export const MAX_METADATA_BYTES = 8 * 1024;
+
+const METADATA =
+  "Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task.";
+
+const MetadataSchema = z.record(z.string(), z.unknown());
+
+const MetadataInput = MetadataSchema.refine((metadata) => Object.keys(metadata).every((key) => key.length >= 1 && key.length <= 100), {
+  message: "keys must be 1 to 100 characters",
+}).refine((metadata) => Buffer.byteLength(JSON.stringify(metadata)) <= MAX_METADATA_BYTES, {
+  message: `can be at most ${MAX_METADATA_BYTES / 1024} KiB as JSON`,
+});
+
 export const SubtaskSchema = z
   .object({
     id: z.string().describe("The subtask's ID within its task: `s1`, `s2`, and so on. Kept for as long as the subtask is."),
@@ -105,6 +119,7 @@ export const TaskSchema = z
     labels: z.array(z.string()).describe("The IDs of its labels."),
     assignee: z.string().nullable().describe("Who the task is assigned to, as free text; null if no one."),
     verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null if no one has said."),
+    metadata: MetadataSchema.describe(`${METADATA} \`{}\` when none is set.`),
     createdAt: Timestamp,
     updatedAt: Timestamp,
     blockedBy: z.array(z.string()).describe("The tasks in `dependsOn` that aren't closed yet."),
@@ -148,6 +163,9 @@ const TaskFields = {
   labels: z.array(z.string()).max(MAX_LABELS).describe("Labels, each by ID or name."),
   assignee: z.string().trim().min(1).max(200).nullable().describe("Who the task is assigned to; null for no one."),
   verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null to say nothing of it."),
+  metadata: MetadataInput.describe(
+    `${METADATA} A JSON object with keys of 1 to 100 characters, at most ${MAX_METADATA_BYTES / 1024} KiB as JSON. On update it replaces the whole object; \`{}\` clears it.`,
+  ),
 };
 
 export const CreateTaskInput = z

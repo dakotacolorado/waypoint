@@ -105,6 +105,10 @@ waypoint; `waypoint --help` gives its options.
 - **Verification** says who checks that the work does what it should, `agent`
   or `person`, and when, `before_release` or `after_release`. It is null until
   someone sets it.
+- **Metadata** is a JSON object of loose data for the tools that start and run
+  work (such as `hostLabels`, the host labels a worker's host must carry).
+  waypoint stores and returns it without reading it; an update replaces it
+  whole. It is `{}` until someone sets it.
 - Cancelled tasks are left out of lists unless you ask for them.
 - **Labels** group tasks. **Comments** sit beside a task, and its **history**
   records every write.

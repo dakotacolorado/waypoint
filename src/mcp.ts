@@ -8,7 +8,7 @@ export const INSTRUCTIONS = `waypoint: ${SUMMARY}
 - status is backlog, in_progress, review, done or cancelled; done and cancelled are the closed statuses.
 - A task depends on the tasks in its dependsOn, and is blocked by those still open (blockedBy). It is ready when it is in backlog and every task it depends on is closed.
 - A task can move to in_progress, review or done once every task it depends on is closed, and to done once every criterion is met and every subtask is closed. Subtasks follow the same rule among themselves.
-- In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only.
+- In update_task, criteria and subtasks are whole lists matched by id; a field left out of an entry keeps its value. To mark one criterion met, send met: true on that entry only. metadata is replaced whole.
 - A task ID may be given as its shortId.`;
 
 /** Sends one API request as the MCP request's caller, and gives its status and JSON. */

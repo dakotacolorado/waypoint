@@ -155,6 +155,38 @@ describe("tasks", () => {
     ]);
   });
 
+  it("stores metadata as given, replaces it whole on update, clears it with {}, and refuses a non-object or one over 8 KiB", async () => {
+    expect((await create({ title: "bare" })).metadata).toEqual({});
+    const task = await create({ title: "pinned", metadata: { hostLabels: ["rtx-4090"], note: { deep: [1, null, true] } } });
+    expect(task.metadata).toEqual({ hostLabels: ["rtx-4090"], note: { deep: [1, null, true] } });
+    expect((await call("GET", `/tasks/${task.id}`)).body!.task).toMatchObject({ metadata: task.metadata });
+    expect(((await call("GET", "/tasks")).body!.tasks as TaskView[]).find((each) => each.id === task.id)!.metadata).toEqual(task.metadata);
+    expect((await update(task.id, { metadata: { hostLabels: ["gpu"] } })).body!.task).toMatchObject({ metadata: { hostLabels: ["gpu"] } });
+    expect((await update(task.id, { title: "renamed" })).body!.task).toMatchObject({ metadata: { hostLabels: ["gpu"] } });
+    expect((await update(task.id, { metadata: {} })).body!.task).toMatchObject({ metadata: {} });
+    const largest = { k: "x".repeat(8 * 1024 - '{"k":""}'.length) };
+    expect((await update(task.id, { metadata: largest })).status).toBe(200);
+    const refused = async (metadata: unknown) => {
+      const { status, body } = await update(task.id, { metadata });
+      expect(status, JSON.stringify(metadata).slice(0, 40)).toBe(400);
+      return body!.message;
+    };
+    expect(await refused({ k: "x".repeat(8 * 1024) })).toBe("metadata can be at most 8 KiB as JSON");
+    expect(await refused({ k: `${"x".repeat(8 * 1024 - '{"k":""}'.length - 1)}é` })).toBe("metadata can be at most 8 KiB as JSON");
+    for (const metadata of [["rtx-4090"], "rtx-4090", 5, null]) expect(await refused(metadata)).toBe("metadata must be an object");
+    expect(await refused({ ["k".repeat(101)]: 1 })).toBe("metadata keys must be 1 to 100 characters");
+    expect(await refused({ "": 1 })).toBe("metadata keys must be 1 to 100 characters");
+    expect((await update(task.id, { metadata: { ["k".repeat(100)]: 1 } })).status).toBe(200);
+    const history = (await call("GET", `/tasks/${task.id}/history`)).body!.entries as HistoryEntry[];
+    expect(history.flatMap((entry) => entry.changes.filter((change) => change.field === "metadata").map((change) => change.to))).toEqual([
+      task.metadata,
+      { hostLabels: ["gpu"] },
+      {},
+      largest,
+      { ["k".repeat(100)]: 1 },
+    ]);
+  });
+
   it("returns what the first create made when its clientToken is sent again", async () => {
     const first = await create({ title: "once", clientToken: "abc" });
     const again = await create({ title: "once", clientToken: "abc" });

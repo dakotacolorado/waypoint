@@ -47,6 +47,24 @@ describe("Store on a file", () => {
     again.db.close();
   });
 
+  it("gives tasks stored before metadata existed an empty one, once", async () => {
+    const path = join(dir, "before-metadata.db");
+    const old = Store.open(path);
+    const task = await old.createTask({ title: "old", metadata: { hostLabels: ["gpu"] } }, null);
+    const { metadata: _, ...before } = (await old.tasks()).get(task.id)!;
+    old.db.prepare("UPDATE tasks SET record = ? WHERE id = ?").run(JSON.stringify(before), task.id);
+    old.db.prepare("UPDATE meta SET value = '1' WHERE key = 'migrations'").run();
+    old.db.close();
+
+    const migrated = Store.open(path);
+    expect((await migrated.tasks()).get(task.id)!.metadata).toEqual({});
+    await migrated.updateTask(task.id, { metadata: { hostLabels: ["rtx-4090"] } }, null);
+    migrated.db.close();
+    const again = Store.open(path);
+    expect((await again.tasks()).get(task.id)!.metadata).toEqual({ hostLabels: ["rtx-4090"] });
+    again.db.close();
+  });
+
   it("backs up to a file another store opens with the same tasks, never leaving a partial copy", async () => {
     const live = Store.open(join(dir, "live.db"));
     const task = await live.createTask({ title: "in the copy" }, null);
