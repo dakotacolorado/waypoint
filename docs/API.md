@@ -1,4 +1,4 @@
-# waypoint API, version 2026-11-14
+# waypoint API, version 2026-11-15
 
 A task tracker with dependency and status management. A task depends on other tasks, and the service keeps it from being started while it is blocked by one still open, or finished before its acceptance criteria are met.
 
@@ -7,11 +7,12 @@ A task tracker with dependency and status management. A task depends on other ta
 - A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
 - A task's **verification** says who checks that its work does what it should, `agent` or `person`, and when, `before_release` or `after_release`; null if no one has said.
+- A task's **metadata** is a JSON object of loose data for the tools that start and run work, such as `hostLabels`; waypoint stores and returns it but does not read it, and an update replaces it whole.
 - Cancelled tasks count as closed, and `ListTasks` leaves them out unless `includeCancelled` is `true` or `status` is `cancelled`.
 
 Every request takes `Authorization: Bearer <token>` but these, which hold no data: `GetHealth` (`/health`), the contracts (`/openapi.json`, `/mcp.json`), the docs (`/docs/api`, `/docs/mcp`) and the page (`/`, `/ui/…`). A write is recorded as its `x-actor` header, else its token's name; one by the environment's admin token (`WAYPOINT_ADMIN_TOKEN`), which has no name, as null.
 
-The API's version, 2026-11-14, is the date its contract last changed, as AWS dates theirs; the package's version is apart, and `GetHealth` gives it. Errors are `{code, message}`.
+The API's version, 2026-11-15, is the date its contract last changed, as AWS dates theirs; the package's version is apart, and `GetHealth` gives it. Errors are `{code, message}`.
 
 ## Operations
 
@@ -129,6 +130,7 @@ Content-type: application/json
          "by": "agent | person",
          "when": "before_release | after_release"
       },
+      "metadata": { },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -199,6 +201,7 @@ Content-type: application/json
       "by": "agent | person",
       "when": "before_release | after_release"
    },
+   "metadata": { },
    "clientToken": "string"
 }
 ```
@@ -247,6 +250,10 @@ Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 Who checks the task's work and when; null to say nothing of it.  
 Type: Object. Nullable: Yes. Required: No.
 
+**metadata**  
+Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it.  
+Type: Object. Required: No.
+
 **clientToken**  
 A unique string you choose. Retrying a request with the same token returns what the first created, instead of creating another.  
 Type: String. Length: 1 to 64. Required: No.
@@ -286,6 +293,7 @@ Content-type: application/json
          "by": "agent | person",
          "when": "before_release | after_release"
       },
+      "metadata": { },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -371,6 +379,7 @@ Content-type: application/json
          "by": "agent | person",
          "when": "before_release | after_release"
       },
+      "metadata": { },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -434,7 +443,8 @@ Content-type: application/json
    "verification": {
       "by": "agent | person",
       "when": "before_release | after_release"
-   }
+   },
+   "metadata": { }
 }
 ```
 
@@ -488,6 +498,10 @@ Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 Who checks the task's work and when; null to say nothing of it.  
 Type: Object. Nullable: Yes. Required: No.
 
+**metadata**  
+Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it.  
+Type: Object. Required: No.
+
 ### Response syntax
 
 ```http
@@ -523,6 +537,7 @@ Content-type: application/json
          "by": "agent | person",
          "when": "before_release | after_release"
       },
+      "metadata": { },
       "createdAt": "string",
       "updatedAt": "string",
       "blockedBy": [ "string" ],
@@ -1232,6 +1247,10 @@ Type: String. Nullable: Yes. Required: Yes.
 **verification**  
 Who checks the task's work and when; null if no one has said.  
 Type: Object. Nullable: Yes. Required: Yes.
+
+**metadata**  
+Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. `{}` when none is set.  
+Type: Object. Required: Yes.
 
 **createdAt**  
 When, as an ISO 8601 date and time in UTC.  

@@ -227,7 +227,7 @@ export class WaypointApi {
 
 type Issue = { code: string; path: PropertyKey[]; message: string; [key: string]: unknown };
 
-const KINDS: Record<string, string> = { string: "text", number: "a number", int: "a whole number", boolean: "true or false", array: "a list", object: "an object" };
+const KINDS: Record<string, string> = { string: "text", number: "a number", int: "a whole number", boolean: "true or false", array: "a list", object: "an object", record: "an object" };
 
 // zod reports what it received only in its own message, unless asked to keep the input.
 const missing = (each: Issue) => each.expected === "nonoptional" || each.message.endsWith("received undefined");

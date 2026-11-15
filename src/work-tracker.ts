@@ -369,6 +369,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
         labels: [...new Set(tags.map((tag) => labelId.get(tag) ?? tag))],
         assignee: item.state === "open" ? item.heldBy : null,
         verification: null,
+        metadata: {},
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       };

@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS client_tokens (operation TEXT NOT NULL, token TEXT NO
 const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   // Tasks gain `verification`.
   (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.verification', json('null')) WHERE json_type(record, '$.verification') IS NULL"),
+  // Tasks gain `metadata`.
+  (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.metadata', json('{}')) WHERE json_type(record, '$.metadata') IS NULL"),
 ];
 
 export interface Comment {

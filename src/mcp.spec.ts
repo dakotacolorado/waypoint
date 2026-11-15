@@ -62,6 +62,14 @@ describe("the MCP server", () => {
     expect(entries.map((entry) => entry.actor)).toEqual(["agent-7"]);
   });
 
+  it("takes metadata on create_task and update_task, and returns it from get_task and list_tasks", async () => {
+    const { task } = (await use(fleet, "create_task", { title: "pinned", metadata: { hostLabels: ["rtx-4090"] } })).json<{ task: TaskView }>();
+    expect((await use(fleet, "get_task", { taskId: task.shortId })).json<{ task: TaskView }>().task.metadata).toEqual({ hostLabels: ["rtx-4090"] });
+    await use(fleet, "update_task", { taskId: task.id, metadata: { hostLabels: ["gpu"] } });
+    expect((await use(fleet, "list_tasks", {})).json<{ tasks: TaskView[] }>().tasks[0]!.metadata).toEqual({ hostLabels: ["gpu"] });
+    expect((await use(fleet, "update_task", { taskId: task.id, metadata: ["gpu"] })).isError).toBe(true);
+  });
+
   it("has one tool per API operation but GetHealth, named the same in snake_case", async () => {
     const { paths } = await openApiDocument();
     const snake = (id: string) => id.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
