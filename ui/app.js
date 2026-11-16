@@ -47,17 +47,17 @@ const base = () => `${location.origin}${location.pathname}`;
 const svg = (source) => document.importNode(new DOMParser().parseFromString(source, "image/svg+xml").documentElement, true);
 
 /** The block-letter name with the pixel mark beside it. */
-function wordmark() {
-  return h("a", { class: "wordmark", href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), svg(MARK_PIXEL_SVG));
+function wordmark(small = false) {
+  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "waypoint" }, h("pre", { "aria-hidden": "true" }, LETTERS), svg(MARK_PIXEL_SVG));
 }
 
 document.querySelector("header .brand").prepend(svg(MARK_SVG));
 
-function landing() {
+function landing(small = false) {
   return h(
     "div",
     { class: "landing" },
-    wordmark(),
+    wordmark(small),
     h("p", { class: "tagline" }, TAGLINE),
     h("p", { class: "muted" }, SUMMARY),
     h(
@@ -321,6 +321,7 @@ async function board(params) {
     );
   });
   main.replaceChildren(
+    landing(true),
     tasks.length === 0 && !cancelled ? h("div", { class: "panel" }, "No tasks yet: ", h("a", { href: "#/new" }, "New task")) : "",
     filters, h("div", { class: `board cols-${columns.length}` }, columns));
 }
