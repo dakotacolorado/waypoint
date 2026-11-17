@@ -368,6 +368,7 @@ export function importWorkTracker(db: DatabaseSync, source: Source, { dryRun = f
         criteria: criteriaOf(item, detail(item.id).history),
         labels: [...new Set(tags.map((tag) => labelId.get(tag) ?? tag))],
         assignee: item.state === "open" ? item.heldBy : null,
+        manager: null,
         verification: null,
         metadata: {},
         createdAt: item.createdAt,

@@ -24,6 +24,8 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.verification', json('null')) WHERE json_type(record, '$.verification') IS NULL"),
   // Tasks gain `metadata`.
   (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.metadata', json('{}')) WHERE json_type(record, '$.metadata') IS NULL"),
+  // Tasks gain `manager`.
+  (db) => db.exec("UPDATE tasks SET record = json_set(record, '$.manager', json('null')) WHERE json_type(record, '$.manager') IS NULL"),
 ];
 
 export interface Comment {

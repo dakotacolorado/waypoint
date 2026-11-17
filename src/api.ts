@@ -105,6 +105,7 @@ export class WaypointApi {
         .filter((task) => q.ready === undefined || task.ready === (q.ready === "true"))
         .filter((task) => label === null || task.labels.includes(label))
         .filter((task) => q.assignee === undefined || task.assignee === (q.assignee === "none" ? null : q.assignee))
+        .filter((task) => q.manager === undefined || task.manager === (q.manager === "none" ? null : q.manager))
         .filter((task) => dependsOn === null || task.dependsOn.includes(dependsOn))
         .filter((task) => text === null || task.title.toLowerCase().includes(text) || task.description.toLowerCase().includes(text));
       const { page: result, nextToken } = page(wanted, q.maxResults, q.nextToken);

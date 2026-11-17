@@ -118,6 +118,7 @@ export const TaskSchema = z
     criteria: z.array(CriterionSchema).describe("The acceptance criteria, in order. The task can't be `done` until each is met."),
     labels: z.array(z.string()).describe("The IDs of its labels."),
     assignee: z.string().nullable().describe("Who the task is assigned to, as free text; null if no one."),
+    manager: z.string().nullable().describe("The agency name of the agent managing the task, a project manager, as free text; null if none."),
     verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null if no one has said."),
     metadata: MetadataSchema.describe(`${METADATA} \`{}\` when none is set.`),
     createdAt: Timestamp,
@@ -162,6 +163,7 @@ const TaskFields = {
     .describe("The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed."),
   labels: z.array(z.string()).max(MAX_LABELS).describe("Labels, each by ID or name."),
   assignee: z.string().trim().min(1).max(200).nullable().describe("Who the task is assigned to; null for no one."),
+  manager: z.string().trim().min(1).max(200).nullable().describe("The agency name of the agent managing the task, a project manager; null for none."),
   verification: VerificationSchema.nullable().describe("Who checks the task's work and when; null to say nothing of it."),
   metadata: MetadataInput.describe(
     `${METADATA} A JSON object with keys of 1 to 100 characters, at most ${MAX_METADATA_BYTES / 1024} KiB as JSON. On update it replaces the whole object; \`{}\` clears it.`,
@@ -199,6 +201,7 @@ export const listTasks = createRoute({
       ready: z.enum(["true", "false"]).optional().describe("`true` for only tasks that can be started now; `false` for only those that can't."),
       label: z.string().optional().describe("Only tasks with this label, by ID or name."),
       assignee: z.string().optional().describe("Only tasks assigned to this; `none` for only unassigned tasks."),
+      manager: z.string().optional().describe("Only tasks managed by this; `none` for only unmanaged tasks."),
       dependsOn: z.string().optional().describe("Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long; none when no task has it."),
       q: z.string().trim().min(1).max(200).optional().describe("Only tasks whose title or description contains this text, ignoring case."),
       includeCancelled: z.enum(["true", "false"]).optional().describe("`true` to include cancelled tasks."),

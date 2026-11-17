@@ -7,6 +7,7 @@ A task tracker with dependency and status management. A task depends on other ta
 - A task can move to `in_progress`, `review` or `done` once every task it depends on is closed, and to `done` once every criterion is met and every subtask is closed.
 - A task's **subtasks** are the steps of its work, with dependencies among themselves held to the same rule. Its **criteria** are what must be true for it to be done.
 - A task's **verification** says who checks that its work does what it should, `agent` or `person`, and when, `before_release` or `after_release`; null if no one has said.
+- A task's **manager** is the agency name of the project manager managing it, or null; `ListTasks` filters by it, `none` for unmanaged tasks.
 - A task's **metadata** is a JSON object of loose data for the tools that start and run work, such as `hostLabels`; waypoint stores and returns it but does not read it, and an update replaces it whole.
 - Cancelled tasks count as closed, and `ListTasks` leaves them out unless `includeCancelled` is `true` or `status` is `cancelled`.
 
@@ -53,7 +54,7 @@ Returns tasks matching every filter given, oldest first. Cancelled tasks are lef
 ### Request syntax
 
 ```http
-GET /tasks?status=status&ready=ready&label=label&assignee=assignee&dependsOn=dependsOn&q=q&includeCancelled=includeCancelled&maxResults=maxResults&nextToken=nextToken HTTP/1.1
+GET /tasks?status=status&ready=ready&label=label&assignee=assignee&manager=manager&dependsOn=dependsOn&q=q&includeCancelled=includeCancelled&maxResults=maxResults&nextToken=nextToken HTTP/1.1
 Authorization: Bearer token
 ```
 
@@ -73,6 +74,10 @@ Type: String. Required: No.
 
 **assignee**  
 Only tasks assigned to this; `none` for only unassigned tasks.  
+Type: String. Required: No.
+
+**manager**  
+Only tasks managed by this; `none` for only unmanaged tasks.  
 Type: String. Required: No.
 
 **dependsOn**  
@@ -126,6 +131,7 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "manager": "string",
       "verification": {
          "by": "agent | person",
          "when": "before_release | after_release"
@@ -197,6 +203,7 @@ Content-type: application/json
    } ],
    "labels": [ "string" ],
    "assignee": "string",
+   "manager": "string",
    "verification": {
       "by": "agent | person",
       "when": "before_release | after_release"
@@ -246,6 +253,10 @@ Type: Array of strings. At most 20 items. Required: No.
 Who the task is assigned to; null for no one.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
+**manager**  
+The agency name of the agent managing the task, a project manager; null for none.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
 **verification**  
 Who checks the task's work and when; null to say nothing of it.  
 Type: Object. Nullable: Yes. Required: No.
@@ -289,6 +300,7 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "manager": "string",
       "verification": {
          "by": "agent | person",
          "when": "before_release | after_release"
@@ -375,6 +387,7 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "manager": "string",
       "verification": {
          "by": "agent | person",
          "when": "before_release | after_release"
@@ -440,6 +453,7 @@ Content-type: application/json
    } ],
    "labels": [ "string" ],
    "assignee": "string",
+   "manager": "string",
    "verification": {
       "by": "agent | person",
       "when": "before_release | after_release"
@@ -494,6 +508,10 @@ Type: Array of strings. At most 20 items. Required: No.
 Who the task is assigned to; null for no one.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
+**manager**  
+The agency name of the agent managing the task, a project manager; null for none.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
 **verification**  
 Who checks the task's work and when; null to say nothing of it.  
 Type: Object. Nullable: Yes. Required: No.
@@ -533,6 +551,7 @@ Content-type: application/json
       } ],
       "labels": [ "string" ],
       "assignee": "string",
+      "manager": "string",
       "verification": {
          "by": "agent | person",
          "when": "before_release | after_release"
@@ -1242,6 +1261,10 @@ Type: Array of strings. Required: Yes.
 
 **assignee**  
 Who the task is assigned to, as free text; null if no one.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**manager**  
+The agency name of the agent managing the task, a project manager, as free text; null if none.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **verification**  

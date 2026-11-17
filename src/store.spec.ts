@@ -65,6 +65,19 @@ describe("Store on a file", () => {
     again.db.close();
   });
 
+  it("gives tasks stored before manager existed a null one", async () => {
+    const path = join(dir, "before-manager.db");
+    const old = Store.open(path);
+    const task = await old.createTask({ title: "old" }, null);
+    const { manager: _, ...before } = (await old.tasks()).get(task.id)!;
+    old.db.prepare("UPDATE tasks SET record = ? WHERE id = ?").run(JSON.stringify(before), task.id);
+    old.db.prepare("UPDATE meta SET value = '2' WHERE key = 'migrations'").run();
+    old.db.close();
+    const migrated = Store.open(path);
+    expect((await migrated.tasks()).get(task.id)!.manager).toBeNull();
+    migrated.db.close();
+  });
+
   it("backs up to a file another store opens with the same tasks, never leaving a partial copy", async () => {
     const live = Store.open(join(dir, "live.db"));
     const task = await live.createTask({ title: "in the copy" }, null);
