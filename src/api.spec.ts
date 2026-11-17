@@ -155,6 +155,22 @@ describe("tasks", () => {
     ]);
   });
 
+  it("names the managing agent on create and update, clears it with null, lists by it or none, and records it in history", async () => {
+    expect((await create({ title: "unmanaged" })).manager).toBeNull();
+    const task = await create({ title: "managed", manager: "pm-a" });
+    expect(task.manager).toBe("pm-a");
+    const titles = async (query: string) => ((await call("GET", `/tasks${query}`)).body!.tasks as TaskView[]).map((t) => t.title);
+    expect(await titles("?manager=pm-a")).toEqual(["managed"]);
+    expect(await titles("?manager=none")).toEqual(["unmanaged"]);
+    expect((await update(task.id, { manager: "pm-b" })).body!.task).toMatchObject({ manager: "pm-b" });
+    expect((await update(task.id, { title: "renamed" })).body!.task).toMatchObject({ manager: "pm-b" });
+    expect((await update(task.id, { manager: null })).body!.task).toMatchObject({ manager: null });
+    expect(await titles("?manager=none")).toEqual(["unmanaged", "renamed"]);
+    expect((await update(task.id, { manager: "" })).status).toBe(400);
+    const history = (await call("GET", `/tasks/${task.id}/history`)).body!.entries as HistoryEntry[];
+    expect(history.flatMap((entry) => entry.changes.filter((change) => change.field === "manager").map((change) => change.to))).toEqual(["pm-a", "pm-b", null]);
+  });
+
   it("stores metadata as given, replaces it whole on update, clears it with {}, and refuses a non-object or one over 8 KiB", async () => {
     expect((await create({ title: "bare" })).metadata).toEqual({});
     const task = await create({ title: "pinned", metadata: { hostLabels: ["rtx-4090"], note: { deep: [1, null, true] } } });

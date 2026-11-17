@@ -67,6 +67,7 @@ export function mcpServer(version: string, call: Call): McpServer {
       ready: z.boolean().optional().describe("true for only tasks that can be started now."),
       label: z.string().optional().describe("Only tasks with this label, by ID or name."),
       assignee: z.string().optional().describe("Only tasks assigned to this; none for unassigned tasks."),
+      manager: z.string().optional().describe("Only tasks managed by this; none for unmanaged tasks."),
       dependsOn: z.string().optional().describe("Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long."),
       q: z.string().optional().describe("Only tasks whose title or description contains this text, ignoring case."),
       includeCancelled: z.boolean().optional().describe("true to include cancelled tasks."),

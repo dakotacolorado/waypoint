@@ -49,6 +49,7 @@ export interface Task {
   criteria: Criterion[];
   labels: string[];
   assignee: string | null;
+  manager: string | null;
   verification: Verification | null;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -91,6 +92,7 @@ export interface TaskInput {
   criteria?: CriterionInput[];
   labels?: string[];
   assignee?: string | null;
+  manager?: string | null;
   verification?: Verification | null;
   metadata?: Record<string, unknown>;
 }
@@ -123,7 +125,7 @@ export interface HistoryEntry {
   at: string;
 }
 
-const RECORDED = ["title", "description", "status", "dependsOn", "subtasks", "criteria", "labels", "assignee", "verification", "metadata"] as const;
+const RECORDED = ["title", "description", "status", "dependsOn", "subtasks", "criteria", "labels", "assignee", "manager", "verification", "metadata"] as const;
 
 /** The recorded fields that differ; a missing side reads as null throughout. */
 export function changes(before: Task | null, after: Task | null): Change[] {
@@ -278,7 +280,7 @@ export class Tasks {
 
   /** `input` applied to `current`, or a new task when there is none. */
   apply(current: Task | null, input: TaskInput, actor: string | null, now: string, id = current?.id ?? this.freshId()): Task {
-    const base: Task = current ?? { id, title: "", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, verification: null, metadata: {}, createdAt: now, updatedAt: now };
+    const base: Task = current ?? { id, title: "", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [], assignee: null, manager: null, verification: null, metadata: {}, createdAt: now, updatedAt: now };
     const next: Task = {
       ...base,
       ...(input.title !== undefined && { title: input.title }),
@@ -287,6 +289,7 @@ export class Tasks {
       ...(input.dependsOn !== undefined && { dependsOn: input.dependsOn }),
       ...(input.labels !== undefined && { labels: input.labels }),
       ...(input.assignee !== undefined && { assignee: input.assignee }),
+      ...(input.manager !== undefined && { manager: input.manager }),
       ...(input.verification !== undefined && { verification: input.verification }),
       ...(input.metadata !== undefined && { metadata: input.metadata }),
       ...(input.criteria !== undefined && { criteria: criteriaFrom(input.criteria, base.criteria, actor, now) }),

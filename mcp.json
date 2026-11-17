@@ -32,6 +32,10 @@
             "description": "Only tasks assigned to this; none for unassigned tasks.",
             "type": "string"
           },
+          "manager": {
+            "description": "Only tasks managed by this; none for unmanaged tasks.",
+            "type": "string"
+          },
           "dependsOn": {
             "description": "Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long.",
             "type": "string"
@@ -190,6 +194,19 @@
               }
             ],
             "description": "Who the task is assigned to; null for no one."
+          },
+          "manager": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agency name of the agent managing the task, a project manager; null for none."
           },
           "verification": {
             "anyOf": [
@@ -409,6 +426,19 @@
               }
             ],
             "description": "Who the task is assigned to; null for no one."
+          },
+          "manager": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agency name of the agent managing the task, a project manager; null for none."
           },
           "verification": {
             "anyOf": [

@@ -299,7 +299,7 @@ function importedTheOldWay(store: Store): void {
   const label = { id: epicLabelId(EPIC), name: `epic:${EPIC.slice(0, 8)}`, color: "#808080", description: "The epic", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z" };
   store.db.prepare("INSERT INTO labels (id, record) VALUES (?, ?)").run(label.id, JSON.stringify(label));
   track("label", label.id, JSON.stringify(label));
-  const story = { id: STORY, title: "The story", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [TAG, label.id], assignee: null, verification: null, metadata: {}, createdAt: "2026-11-02T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z" };
+  const story = { id: STORY, title: "The story", description: "", status: "backlog", dependsOn: [], subtasks: [], criteria: [], labels: [TAG, label.id], assignee: null, manager: null, verification: null, metadata: {}, createdAt: "2026-11-02T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z" };
   store.db.prepare("INSERT INTO tasks (id, record) VALUES (?, ?)").run(STORY, JSON.stringify(story));
   track("task", STORY, JSON.stringify(story));
   track("subtask", TASK_A, `${STORY}/s1`);

@@ -60,6 +60,7 @@ Returns tasks matching every filter given, oldest first. Cancelled tasks are lef
 | `ready` | boolean |  | true for only tasks that can be started now. |
 | `label` | string |  | Only tasks with this label, by ID or name. |
 | `assignee` | string |  | Only tasks assigned to this; none for unassigned tasks. |
+| `manager` | string |  | Only tasks managed by this; none for unmanaged tasks. |
 | `dependsOn` | string |  | Only tasks that depend on this task, by its ID or a prefix of it at least 8 characters long. |
 | `q` | string |  | Only tasks whose title or description contains this text, ignoring case. |
 | `includeCancelled` | boolean |  | true to include cancelled tasks. |
@@ -80,6 +81,7 @@ Creates a task in backlog, unless status says otherwise.
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+| `manager` | string or null |  | The agency name of the agent managing the task, a project manager; null for none. |
 | `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
 | `metadata` | object |  | Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it. |
 | `clientToken` | string |  | A unique string; retrying with it returns what the first request created. |
@@ -107,6 +109,7 @@ Changes the fields given. Cancelling a task cancels its open subtasks.
 | `criteria` | object[] |  | The acceptance criteria, in order. On update this is the whole list: a criterion left out is removed. |
 | `labels` | string[] |  | Labels, each by ID or name. |
 | `assignee` | string or null |  | Who the task is assigned to; null for no one. |
+| `manager` | string or null |  | The agency name of the agent managing the task, a project manager; null for none. |
 | `verification` | object or null |  | Who checks the task's work and when; null to say nothing of it. |
 | `metadata` | object |  | Loose key/value data for the tools that start and run work, which waypoint stores and returns but does not read. `hostLabels`, a list of agency host labels, is read by hopper and workplace-ui when they start a worker on the task. A JSON object with keys of 1 to 100 characters, at most 8 KiB as JSON. On update it replaces the whole object; `{}` clears it. |
 
